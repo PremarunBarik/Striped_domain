@@ -12,8 +12,8 @@ MC_steps = 50000
 MC_burns = 50000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 20
-n_y = 20
+n_x = 10
+n_y = 10
 n_z = 1
 
 N_sd = n_x*n_y
@@ -22,7 +22,7 @@ N_sd = n_x*n_y
 replica_num = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
-z_dir_sd = [(-1)^rand(rng, Int64) for i in 1:N_sd]
+z_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
 z_dir_sg = repeat(z_dir_sd, replica_num, 1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
@@ -126,9 +126,9 @@ end
 global z_dir_sd = Array(z_dir_sd)
 
 #no need to change these matrices to Array -- changing the position from 1 to 0.5
-global x_pos_sd = Array(x_pos_sd .- 0.5)                              
-global y_pos_sd = Array(y_pos_sd .- 0.5)
-global z_pos_sd = Array(z_pos_sd .- 0.5)
+global x_pos_sd = Array(x_pos_sd)                              
+global y_pos_sd = Array(y_pos_sd)
+global z_pos_sd = Array(z_pos_sd)
 
 NN_s = Array{Int64}(NN_s)
 NN_n = Array{Int64}(NN_n)
@@ -236,8 +236,9 @@ end
 
 #CALCULATE EWALD SUM 
 #-----------------------------------------------------------#
-global alpha = 1
-global n_cut_real = 1
+#REAL SPACE CALCULATIONS
+global alpha = 5/n_x
+global n_cut_real = 5
 global simulation_box_num = (2*n_cut_real + 1)^2
 
 x_pos_ES = n_x*collect(-n_cut_real:1:n_cut_real)
@@ -250,140 +251,69 @@ y_pos_ES = repeat(y_pos_ES, outer=N_sd)
 
 x_pos_sd_ES = repeat(x_pos_sd, outer = simulation_box_num)
 y_pos_sd_ES = repeat(y_pos_sd, outer = simulation_box_num)
-z_pos_sd = repeat(z_pos_sd, outer = simulation_box_num)
+z_pos_sd_ES = repeat(z_pos_sd, outer = simulation_box_num)
 
 global x_pos_sd_ES = x_pos_sd_ES - x_pos_ES
 global y_pos_sd_ES = y_pos_sd_ES - y_pos_ES
 
 distance_ij = sqrt.( ((x_pos_sd .- x_pos_sd_ES').^2) .+ ((y_pos_sd .- y_pos_sd_ES').^2))
+
+global B_term = (erfc.(alpha .* distance_ij) .+ ((2*alpha/pi) .* (distance_ij) .* (exp.(-(alpha^2) .* (distance_ij.^2))))) ./ (distance_ij.^3)
+global C_term = ((3 .* erfc.(alpha .* distance_ij)) .+ ((2*alpha/pi) .* (3 .+ (2 .* (alpha^2) .* (distance_ij.^2))) .* exp.((-alpha^2) .* (distance_ij .^ 2)))) ./ (distance_ij .^ 5) 
+
 #-----------------------------------------------------------#
-global n_cut_reciprocal = 
+#RECIPROCAL SPACE CALCULATIONS
+global n_cut_reciprocal = 10
+global k_space = collect(1:n_cut_reciprocal)
+global k_space = repeat(k_space, (inner=N_sd))
+
+h_reciprocal = 1 ./ x_pos_sd
+k_reciprocal = 1 ./ y_pos_sd
+l_reciprocal = 1 ./ z_pos_sd
+
+lcm_hkl = lcm.(Int.(x_pos_sd) , Int.(y_pos_sd), Int.(z_pos_sd))
+
+h_reciprocal = (2*pi*lcm_hkl) .* h_reciprocal
+k_reciprocal = (2*pi*lcm_hkl) .* k_reciprocal
+l_reciprocal = (2*pi*lcm_hkl) .* l_reciprocal
+
+global h_reciprocal = repeat(h_reciprocal, (outer=n_cut_reciprocal))
+global k_reciprocal = repeat(k_reciprocal, (outer=n_cut_reciprocal))
+global l_reciprocal = repeat(l_reciprocal, (outer=n_cut_reciprocal))
+
+global h_reciprocal = repeat((k_space .* h_reciprocal)', N_sd, 1)
+global k_reciprocal = repeat((k_space .* k_reciprocal)', N_sd, 1)
+global l_reciprocal = repeat((k_space .* l_reciprocal)', N_sd, 1) 
+
+global z_dir_sd_i_reciprocal = z_dir_sd .* l_reciprocal
+global z_dir_sd_j = repeat(z_dir_sd', 1 , n_cut_reciprocal)
+global z_dir_sd_j_reciprocal = z_dir_sd_j .* l_reciprocal
+
+global k_mod = sqrt.((h_reciprocal.^2) .+ (k_reciprocal.^2) .+ (l_reciprocal.^2)) 
+global exponential_term = exp.(-(k_mod .^2) ./ (4*(alpha^2)))
+
+global x_pos_k_space = repeat(x_pos_sd', 1, n_cut_reciprocal)
+global y_pos_k_space = repeat(y_pos_sd', 1, n_cut_reciprocal)
+global z_pos_k_space = repeat(z_pos_sd', 1, n_cut_reciprocal)
+
+global cosine_term = cos.((x_pos_k_space .* h_reciprocal) .+ (y_pos_k_space .* k_reciprocal) .+ (z_pos_k_space .* l_reciprocal))
 
 function Ewald_sum()
 
-    B_term = (erfc.(alpha .* distance_ij) .+ ((2*alpha/pi) .* (distance_ij) .* (exp.(-(alpha^2) .* (distance_ij.^2))))) ./ (distance_ij.^3)
-    C_term = ((3 .* erfc.(alpha .* distance_ij)) .+ ((2*alpha/pi) .* (3 .+ (2 .* (alpha^2) .* (distance_ij.^2))) .* exp.((-alpha^2) .* (distance_ij .^ 2)))) ./ (distance_ij .^ 5) 
-
     z_dir_sd_ES = repeat(z_dir_sd, outer = simulation_box_num)
-    energy_real = (z_dir_sd.*z_dir_sd_ES') ./ (distance_ij) .* erfc(alpha .* distance_ij)
-    energy_real = sum(energy_real, dims=2)
+    term_1 = (z_dir_sd .* z_dir_sd_ES' .* B_term) 
+    replace!(term_1, Inf=>0)
+    term_1 = sum(term_1, dims=2) ./ 2
+
+    global z_dir_sd_i_reciprocal = z_dir_sd .* l_reciprocal
+    global z_dir_sd_j = repeat(z_dir_sd', 1 , n_cut_reciprocal)
+    global z_dir_sd_j_reciprocal = z_dir_sd_j .* l_reciprocal
+    
+    term_2 = (z_dir_sd_i_reciprocal .* z_dir_sd_j_reciprocal .* exponential_term) ./ (k_mod .^ 2)
+    term_2 = sum(term_2, dims=2) .* (2*pi/n_x/n_y)
+
+    term_3 = 2*(alpha^3)/(3*sqrt(pi)) .* (z_dir_sd .^2)
+
+    energy_ewald_sum = term_1 .+ term_2 .- term_3
 end
 
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#MATRIX TO STORE TOTAL ENERGY
-global energy_tot = zeros(N_sd*replica_num, 1) |> Array
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#COMPUTE THE ENERGY CHANGE OF THE SYSTEM
-function compute_tot_energy_spin_glass()
-    compute_exchange_energy()
-    calculate_dipolar_energy()
-
-    global energy_tot = (energy_exchange .- energy_dipolar .+ (B_global*z_dir_sd))
-
-    return energy_tot
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#MATRIX TO STORE DELTA ENERGY
-global del_energy = zeros(replica_num, 1) |> Array
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#COMPUTE THE ENERGY CHANGE OF THE SYSTEM
-function compute_del_energy_spin_glass(rng)
-    compute_tot_energy_spin_glass()
-
-    global rand_pos =  Array(rand(rng, (1:N_sd), (replica_num, 1)))
-    global r = rand_pos .+ rand_rep_ref
-
-    global del_energy = 2*energy_tot[r]
-
-    return del_energy
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#Matrix to keep track of which flipped how many times
-#global flip_count = Array(zeros(N_sg*replica_num, 1))
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#ONE MC STEPS
-function one_MC(rng, Temp)                                           #benchmark time: 438.17 microsecond(20x20), 15.9 ms(50x50)
-    compute_del_energy_spin_glass(rng)
-
-    trans_rate = exp.(-del_energy/Temp)
-    global rand_num_flip = Array(rand(rng, Float64, (replica_num, 1)))
-    flipit = sign.(rand_num_flip .- trans_rate)
-    global z_dir_sd[r] = flipit.*z_dir_sd[r]
-
-#    flipit = (abs.(flipit .- 1))/2
-#    global flip_count[r] = flip_count[r] .+ flipit
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#MATRIX TO STORE DELTA ENERGY
-global glauber = Array(zeros(replica_num, 1))
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#function to flip a spin using KMC subroutine
-function one_MC_kmc(rng, N_sd, replica_num, Temp)
-    compute_tot_energy_spin_glass()
-
-    trans_rate = exp.(-energy_tot/Temp)
-    global glauber = trans_rate./(1 .+ trans_rate)
-    loc = reshape(mx_sd, (N_sd,replica_num)) |> Array
-
-    for k in 1:replica_num
-        loc[:,k] = shuffle!(loc[:,k])
-    end
-
-    glauber_cpu = glauber |> Array
-    trans_prob = glauber_cpu[loc] |> Array
-    trans_prob_ps = cumsum(trans_prob, dims=1)
-
-    for k in 1:replica_num
-        chk = rand(rng, Float64)*trans_prob_ps[N_sd,k]
-        for l in 1:N_sd
-            if chk <= trans_prob_ps[l,k]
-                z_dir_sd[loc[l,k]] = (-1)*z_dir_sd[loc[l,k]]
-                global flip_count[loc[l,k]] = flip_count[loc[l,k]] + 1
-            break
-            end
-        end
-    end
-
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#MAIN BODY
-#MC BURN STEPS
-for j in 1:MC_burns
-
-    one_MC(rng, Temp)
-
-end
-#-----------------------------------------------------------#
-for j in 1:MC_steps
-
-    one_MC(rng, Temp)                                                     #MONTE CARLO FUNCTION 
-
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#PLOTTING SPINS WITH CROSS AND DOT
-global marker_pallete = [:xcross, :square, :circle]
-global z_dir_sd_plot = z_dir_sd[1:N_sd] .+ 2
-
-scatter(x_pos_sd, y_pos_sd, markershape=marker_pallete[z_dir_sd_plot], 
-        markersize=4, legend=false, framestyle=:box, size=(400,400))
-savefig("striped_domins_alpha$(alpha)_temp$(Temp).png")
-#------------------------------------------------------------------------------------------------------------------------------#
