@@ -235,9 +235,9 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #CALCULATE EWALD SUM 
-
-global alpha = 
-global n_cut_real = 2
+#-----------------------------------------------------------#
+global alpha = 1
+global n_cut_real = 1
 global simulation_box_num = (2*n_cut_real + 1)^2
 
 x_pos_ES = n_x*collect(-n_cut_real:1:n_cut_real)
@@ -255,10 +255,15 @@ z_pos_sd = repeat(z_pos_sd, outer = simulation_box_num)
 global x_pos_sd_ES = x_pos_sd_ES - x_pos_ES
 global y_pos_sd_ES = y_pos_sd_ES - y_pos_ES
 
-distance_ij = sqrt.( ((x_pos_sd .- x_pos_ES').^2) .+ ((y_pos_sd .- y_pos_sd_ES').^2))
+distance_ij = sqrt.( ((x_pos_sd .- x_pos_sd_ES').^2) .+ ((y_pos_sd .- y_pos_sd_ES').^2))
+#-----------------------------------------------------------#
+global n_cut_reciprocal = 
 
 function Ewald_sum()
-    
+
+    B_term = (erfc.(alpha .* distance_ij) .+ ((2*alpha/pi) .* (distance_ij) .* (exp.(-(alpha^2) .* (distance_ij.^2))))) ./ (distance_ij.^3)
+    C_term = ((3 .* erfc.(alpha .* distance_ij)) .+ ((2*alpha/pi) .* (3 .+ (2 .* (alpha^2) .* (distance_ij.^2))) .* exp.((-alpha^2) .* (distance_ij .^ 2)))) ./ (distance_ij .^ 5) 
+
     z_dir_sd_ES = repeat(z_dir_sd, outer = simulation_box_num)
     energy_real = (z_dir_sd.*z_dir_sd_ES') ./ (distance_ij) .* erfc(alpha .* distance_ij)
     energy_real = sum(energy_real, dims=2)
