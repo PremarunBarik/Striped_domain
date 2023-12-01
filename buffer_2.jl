@@ -237,7 +237,7 @@ end
 #CALCULATE EWALD SUM 
 #-----------------------------------------------------------#
 #REAL SPACE CALCULATIONS
-global alpha = 1/5
+global alpha = 1/(3*sqrt(2)n_x)
 global n_cut_real = 5
 global simulation_box_num = (2*n_cut_real + 1)^2
 
@@ -263,7 +263,7 @@ global C_term = ((3 .* erfc.(alpha .* distance_ij)) .+ ((2*alpha/pi) .* (3 .+ (2
 
 #-----------------------------------------------------------#
 #RECIPROCAL SPACE CALCULATIONS
-global n_cut_reciprocal = 5
+global n_cut_reciprocal = 7
 
 x_pos_reciprocal = (2*pi)*collect(1:n_cut_reciprocal)
 x_pos_reciprocal = repeat(x_pos_reciprocal, inner=n_cut_reciprocal)
