@@ -12,8 +12,8 @@ MC_steps = 50000
 MC_burns = 50000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 30
-n_y = 30
+n_x = 10
+n_y = 10
 n_z = 1
 
 N_sd = n_x*n_y
@@ -237,80 +237,61 @@ end
 #CALCULATE EWALD SUM 
 #-----------------------------------------------------------#
 #REAL SPACE CALCULATIONS
-global alpha = 1/(3*sqrt(2)*n_x)
-global n_cut_real = 6
+global alpha = 1/(3*sqrt(2)n_x)
+global n_cut_real = 5
 global simulation_box_num = (2*n_cut_real + 1)^2
 
-x_pos_ES = n_x*collect(-n_cut_real:1:n_cut_real)
-x_pos_ES = repeat(x_pos_ES, inner=(2*n_cut_real + 1))
-x_pos_ES = repeat(x_pos_ES, outer=N_sd)
+x_pos_real = n_x*collect(-n_cut_real:1:n_cut_real)
+x_pos_real = repeat(x_pos_real, inner=(2*n_cut_real + 1))
+x_pos_real = reshape(x_pos_real, 1 , 1, simulation_box_num)
     
-y_pos_ES = n_y*collect(-n_cut_real:1:n_cut_real)
-y_pos_ES = repeat(y_pos_ES, outer=(2*n_cut_real +1))
-y_pos_ES = repeat(y_pos_ES, outer=N_sd)
+y_pos_real = n_y*collect(-n_cut_real:1:n_cut_real)
+y_pos_real = repeat(y_pos_real, outer=(2*n_cut_real +1))
+y_pos_real = reshape(y_pos_real, 1, 1, simulation_box_num)
 
-x_pos_sd_ES = repeat(x_pos_sd, outer = simulation_box_num)
-y_pos_sd_ES = repeat(y_pos_sd, outer = simulation_box_num)
-z_pos_sd_ES = repeat(z_pos_sd, outer = simulation_box_num)
+global x_pos_sd_real = x_pos_sd' .- x_pos_real
+global y_pos_sd_real = y_pos_sd' .- y_pos_real
 
-global x_pos_sd_ES = x_pos_sd_ES - x_pos_ES
-global y_pos_sd_ES = y_pos_sd_ES - y_pos_ES
-
-distance_ij = sqrt.( ((x_pos_sd .- x_pos_sd_ES').^2) .+ ((y_pos_sd .- y_pos_sd_ES').^2))
+distance_ij = sqrt.( ((x_pos_sd .- x_pos_sd_real).^2) .+ ((y_pos_sd .- y_pos_sd_real).^2))
 
 global B_term = (erfc.(alpha .* distance_ij) .+ ((2*alpha/pi) .* (distance_ij) .* (exp.(-(alpha^2) .* (distance_ij.^2))))) ./ (distance_ij.^3)
 global C_term = ((3 .* erfc.(alpha .* distance_ij)) .+ ((2*alpha/pi) .* (3 .+ (2 .* (alpha^2) .* (distance_ij.^2))) .* exp.((-alpha^2) .* (distance_ij .^ 2)))) ./ (distance_ij .^ 5) 
 
 #-----------------------------------------------------------#
 #RECIPROCAL SPACE CALCULATIONS
-global n_cut_reciprocal = 10
-global k_space = collect(1:n_cut_reciprocal)
-global k_space = repeat(k_space, (inner=N_sd))
+global n_cut_reciprocal = 7
 
-h_reciprocal = 1 ./ x_pos_sd
-k_reciprocal = 1 ./ y_pos_sd
-l_reciprocal = 1 ./ z_pos_sd
+x_pos_reciprocal = (2*pi)*collect(1:n_cut_reciprocal)
+x_pos_reciprocal = repeat(x_pos_reciprocal, inner=n_cut_reciprocal)
+global x_pos_reciprocal = reshape(x_pos_reciprocal, 1,1,n_cut_reciprocal^2)
 
-lcm_hkl = lcm.(Int.(x_pos_sd) , Int.(y_pos_sd), Int.(z_pos_sd))
+y_pos_reciprocal = (2*pi)*collect(1:n_cut_reciprocal)
+y_pos_reciprocal = repeat(y_pos_reciprocal, outer=n_cut_reciprocal)
+global y_pos_reciprocal = reshape(y_pos_reciprocal, 1,1,n_cut_reciprocal^2)
 
-h_reciprocal = (2*pi*lcm_hkl) .* h_reciprocal
-k_reciprocal = (2*pi*lcm_hkl) .* k_reciprocal
-l_reciprocal = (2*pi*lcm_hkl) .* l_reciprocal
+global z_pos_reciprocal = (2*pi)*ones(1, 1, n_cut_reciprocal^2)
 
-global h_reciprocal = repeat(h_reciprocal, (outer=n_cut_reciprocal))
-global k_reciprocal = repeat(k_reciprocal, (outer=n_cut_reciprocal))
-global l_reciprocal = repeat(l_reciprocal, (outer=n_cut_reciprocal))
+mu_i_dot_k = z_dir_sd.*z_pos_reciprocal
+mu_j_dot_k = z_dir_sd'.*z_pos_reciprocal
 
-global h_reciprocal = repeat((k_space .* h_reciprocal)', N_sd, 1)
-global k_reciprocal = repeat((k_space .* k_reciprocal)', N_sd, 1)
-global l_reciprocal = repeat((k_space .* l_reciprocal)', N_sd, 1) 
+global cos_k_dot_r_ij = cos.((x_pos_reciprocal .*(x_pos_sd .- x_pos_sd')) .+ (y_pos_reciprocal .*(y_pos_sd .- y_pos_sd')))
+global k_mod_2 = (x_pos_reciprocal .^ 2) .+ (y_pos_reciprocal .^ 2) .+ (z_pos_reciprocal .^ 2)
+global exponential_term = exp.( -k_mod_2 ./ (4*(alpha^2)))
 
-global z_dir_sd_i_reciprocal = z_dir_sd .* l_reciprocal
-global z_dir_sd_j = repeat(z_dir_sd', 1 , n_cut_reciprocal)
-global z_dir_sd_j_reciprocal = z_dir_sd_j .* l_reciprocal
-
-global k_mod = sqrt.((h_reciprocal.^2) .+ (k_reciprocal.^2) .+ (l_reciprocal.^2)) 
-global exponential_term = exp.(-(k_mod .^2) ./ (4*(alpha^2)))
-
-global x_pos_k_space = repeat(x_pos_sd', 1, n_cut_reciprocal)
-global y_pos_k_space = repeat(y_pos_sd', 1, n_cut_reciprocal)
-global z_pos_k_space = repeat(z_pos_sd', 1, n_cut_reciprocal)
-
-global cosine_term = cos.((x_pos_k_space .* h_reciprocal) .+ (y_pos_k_space .* k_reciprocal) .+ (z_pos_k_space .* l_reciprocal))
 
 function Ewald_sum()
 
-    z_dir_sd_ES = repeat(z_dir_sd, outer = simulation_box_num)
-    term_1 = (z_dir_sd .* z_dir_sd_ES' .* B_term) 
+    term_1 = (z_dir_sd .* z_dir_sd' .* B_term) 
     replace!(term_1, Inf=>0)
-    term_1 = sum(term_1, dims=2) ./ 2
+    term_1 = sum(term_1, dims=3) 
+    term_1= vec(sum(term_1, dims=2)) ./2
 
-    global z_dir_sd_i_reciprocal = z_dir_sd .* l_reciprocal
-    global z_dir_sd_j = repeat(z_dir_sd', 1 , n_cut_reciprocal)
-    global z_dir_sd_j_reciprocal = z_dir_sd_j .* l_reciprocal
-    
-    term_2 = (z_dir_sd_i_reciprocal .* z_dir_sd_j_reciprocal .* exponential_term) ./ (k_mod .^ 2)
-    term_2 = sum(term_2, dims=2) .* (2*pi/n_x/n_y)
+    mu_i_dot_k = z_dir_sd.*z_pos_reciprocal
+    mu_j_dot_k = z_dir_sd'.*z_pos_reciprocal
+
+    term_2 = (mu_i_dot_k .* mu_j_dot_k .* exponential_term .* cos_k_dot_r_ij) ./ (k_mod_2)
+    term_2 = sum(term_2, dims=3)
+    term_2 = vec(sum(term_2, dims=2))
 
     term_3 = 2*(alpha^3)/(3*sqrt(pi)) .* (z_dir_sd .^2)
 
