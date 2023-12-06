@@ -1,5 +1,9 @@
 using Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions
 
+#This code does not implement ewald sum method. Here we calculate the dontribution of dipolar energy of a lot
+#of image spins (millions) on the spins inside the main system or simulation box. the final matrix--term_1--contains
+#the energy terms spin wise. Meaning the matrix contains energy terms spinwise.
+
 rng = MersenneTwister()
 global B_global = 0.0   #globally applied field on the system
 global alpha = 0.35     #defined parameter for dipolar interaction energy
