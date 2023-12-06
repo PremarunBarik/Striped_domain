@@ -1,5 +1,11 @@
 using Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions
 
+                                        #---CPU code---#
+
+#This code does not implement ewald sum. Instead I calculate the energy contribution of spins from a lot many image boxes
+#of the actual simulation box. In this code we plot the energy cotribution of the image simulation boxes and their 
+#correcponding distance from the main simulation box.
+
 rng = MersenneTwister()
 global B_global = 0.0   #globally applied field on the system
 global alpha = 0.35     #defined parameter for dipolar interaction energy
