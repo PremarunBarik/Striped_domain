@@ -25,7 +25,7 @@ replica_num = 1
 dipole_length = 0.5
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
-x_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
+x_dir_sd = [-(1)^rand(rng, Int64) for i in 1:N_sd]
 x_dir_sd = repeat(x_dir_sd, replica_num, 1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
@@ -45,8 +45,8 @@ for i in 1:N_sd
     y_pos_sd[i] = ((i-1)%n_y)+1                         #1th position
 end
 
-x_pos_positive = x_pos_sd .+ ((dipole_length/2) * x_dir_sd)
-x_pos_negative = x_pos_sd .- ((dipole_length/2) * x_dir_sd)
+x_pos_positive = x_pos_sd .+ (dipole_length/2) 
+x_pos_negative = x_pos_sd .- (dipole_length/2)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -81,8 +81,6 @@ q_positive_positive = (q_positive .* q_positive')
 q_positive_negative = (q_positive .* q_negative')
 q_negative_positive = (q_negative .* q_positive')
 q_negative_negative = (q_negative .* q_negative')
-
-term_1_pp = 
 
 term_1 = 1/2*(replace!((q_positive_positive ./ distance_positive_i_positive_j), Inf=>0)
                 .+ replace!((q_positive_negative ./ distance_positive_i_negative_j), Inf=>0)
