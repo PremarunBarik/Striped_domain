@@ -45,8 +45,8 @@ for i in 1:N_sd
     y_pos_sd[i] = ((i-1)%n_y)+1                         #1th position
 end
 
-x_pos_positive = x_pos_sd .+ ((dipole_length/2) * x_dir_sd)
-x_pos_negative = x_pos_sd .- ((dipole_length/2) * x_dir_sd)
+x_pos_positive = x_pos_sd .+ (dipole_length/2)
+x_pos_negative = x_pos_sd .- (dipole_length/2)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
