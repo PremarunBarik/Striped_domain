@@ -12,8 +12,8 @@ MC_steps = 50000
 MC_burns = 50000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 10
-n_y = 10
+n_x = 2
+n_y = 2
 n_z = 1
 
 N_sd = n_x*n_y
@@ -25,7 +25,8 @@ replica_num = 1
 dipole_length = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
-z_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
+#z_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
+z_dir_sd = [1, -1, 1, -1]
 z_dir_sd = repeat(z_dir_sd, replica_num, 1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
@@ -39,7 +40,7 @@ mx_sd = Array(collect(1:N_sd*replica_num))
 
 x_pos_sd = zeros(N_sd, 1)
 y_pos_sd = zeros(N_sd, 1)
-z_pos_sd = fill(1.5, N_sd, 1)
+z_pos_sd = fill(0.5, N_sd, 1)
 
 for i in 1:N_sd
     x_pos_sd[i] = trunc((i-1)/n_x)+1                    #10th position
@@ -58,8 +59,8 @@ energy_radius = zeros(30,1)
 #CALCULATE EWALD SUM 
 #-----------------------------------------------------------#
 #REAL SPACE CALCULATIONS
-global alpha = 0.05
-global n_cut_real = 30
+global alpha = 0.2
+global n_cut_real = 20
 global simulation_box_num = (2*n_cut_real + 1)^2
 
 x_pos_real = n_x*collect(-n_cut_real:1:n_cut_real)
@@ -130,7 +131,7 @@ term_1= vec(sum(term_1, dims=2))
     term_2= vec(sum(term_2, dims=2))
                 
 
-    term_3 = (alpha/sqrt(pi)).* ((q_upper .^2) .+ (q_lower .^2))
+    term_3 = (alpha/sqrt(2*pi)).* ((q_upper .^2) .+ (q_lower .^2))
 
     energy_ewald_sum_CC = term_1 .+ term_2 .- term_3
 
