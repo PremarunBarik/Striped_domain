@@ -25,8 +25,7 @@ replica_num = 1
 dipole_length = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
-#z_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
-z_dir_sd = [1, -1, 1, -1]
+z_dir_sd = [(1)^rand(rng, Int64) for i in 1:N_sd]
 z_dir_sd = repeat(z_dir_sd, replica_num, 1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
