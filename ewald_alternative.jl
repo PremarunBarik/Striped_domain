@@ -12,8 +12,8 @@ MC_steps = 50000
 MC_burns = 50000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 10
-n_y = 10
+n_x = 20
+n_y = 20
 n_z = 1
 
 N_sd = n_x*n_y
@@ -49,11 +49,11 @@ end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
-global kizzie = abs.(x_pos_sd .- x_pos_sd')/n_x
-global eta = abs.(y_pos_sd .- y_pos_sd')/n_y
+global kizzie = (x_pos_sd .- x_pos_sd')/n_x
+global eta = (y_pos_sd .- y_pos_sd')/n_y
 
-global l_list = collect(1:10)
-global m_list = collect(-10:1:10)
+global l_list = collect(1:50)
+global m_list = collect(-50:1:50)
 
 global denom = zeros(N_sd, N_sd)
 global denom_counter = zeros(N_sd, N_sd)
@@ -70,32 +70,30 @@ for i in 1:N_sd
             
             else
                 
-                sum = 0.0
+                global s = 0.0
 
-                for l in 1:length(l_list)
-                    for m in 1:length(m_list)
-                        sum += cos(2*pi*l_list[l]*eta[i,j])*abs(l_list[l]/(kizzie[i,j]+ m_list[m]))*besselk(1, (2*pi*l_list[l]*abs(kizzie[i,j]+m_list[m])))
+                for m in 1:length(m_list)
+                    for l in 1:length(l_list)
+                        global s += l_list[l]*cos(2*pi*l_list[l]*eta[i,j])*abs(1/(kizzie[i,j] + m_list[m]))*besselk(1, (2*pi*l_list[l]*abs(kizzie[i,j] + m_list[m])))
                     end
                 end
 
-            denom[i,j] = (8*pi/(n_x^3))*(sum + 2*(zeta(2, kizzie[i,j]) - zeta(2, -kizzie[i,j]) - kizzie[i,j]^(-2)))
-            denom_counter[i,j] = 2
-
+                denom[i,j] = ((2*pi^2)/((sin(pi*kizzie[i,j]))^2) + (8*pi*s))/(n_x^3)
+                denom_counter[i,j] = 2
             end
         
         else
 
-            sum = 0.0
+            global s = 0.0
 
-            for l in 1:length(l_list)
-                for m in 1:length(m_list)
-                    sum += cos(2*pi*l_list[l]*kizzie[i,j])*abs(l_list[l]/(eta[i,j]+ m_list[m]))*besselk(1, (2*pi*l_list[l]*abs(eta[i,j]+m_list[m])))
+            for m in 1:length(m_list)
+                for l in 1:length(l_list)
+                    global s += l_list[l]*cos(2*pi*l_list[l]*kizzie[i,j])*abs(1/(eta[i,j] + m_list[m]))*besselk(1, (2*pi*l_list[l]*abs(eta[i,j] + m_list[m])))
                 end
             end
 
-            denom[i,j] = (8*pi/(n_x^3))*(sum + 2*(zeta(2, eta[i,j]) - zeta(2, -eta[i,j]) - eta[i,j]^(-2)))
+            denom[i,j] = ((2*pi^2)/((sin(pi*eta[i,j]))^2) + (8*pi*s))/(n_x^3)
             denom_counter[i,j] = 3
         end
     end
 end
-
