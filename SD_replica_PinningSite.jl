@@ -1,22 +1,29 @@
 using CUDA, Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
 ENV["GKSwstype"] = "100"
+CUDA.set_runtime_version!(v"11.7")
 
 rng = MersenneTwister()
 global B_global = 0.0   #globally applied field on the system
 #global alpha_ratio = 0.32     #defined parameter for dipolar interaction energy
-global Temp = 3.0      #defined temperature of the system
+#global Temp = 3.0      #defined temperature of the system
 
-#define temperature matrix with particulat temperature values
-global Temp_values = [6.0, 5.5, 5.0, 4.5, 4.0, 3.5, 3.0, 2.6, 2.0, 1.6]
+#define temperature matrix with particular temperature values
+min_Temp = 0.6
+max_Temp = 1.6
+Temp_step = 30
+Temp_interval = (max_Temp - min_Temp)/Temp_step
+Temp_values = collect(min_Temp:Temp_interval:max_Temp)
+Temp_values = reverse(Temp_values)
+
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #NUMBER OF MC MC STEPS 
-global MC_steps = 200000
-global MC_burns = 50000
+global MC_steps = 100000
+global MC_burns = 400000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 40
-n_y = 40
+n_x = 32
+n_y = 32
 n_z = 1
 
 N_sd = n_x*n_y
@@ -25,14 +32,47 @@ N_sd = n_x*n_y
 replica_num = 50
 
 #define interaction co-efficients of NN and NNN interactions
-global J_NN = 3.0
+global J_NN = 3.1
 
 #LENGTH OF DIPOLE 
 dipole_length = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
-global z_dir_sd = dipole_length*[(-1)^rand(rng, Int64) for i in 1:N_sd]
+global z_dir_sd = dipole_length*[(1)^rand(rng, Int64) for i in 1:N_sd]
 global z_dir_sd = repeat(z_dir_sd, 1, replica_num) |> CuArray
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#define the pinning sites 
+pinning_site_num = 64
+
+#define anisotropy energy of pinning sites
+K_anisotropy = 50
+
+#defining pinning site accross the replicas
+pinning_site_pos = zeros(pinning_site_num, replica_num)
+
+for k in 1:replica_num
+    #selecting spins in random positionsin one single replica
+    random_position = randperm(N_sd)
+    pinning_site_pos[:,k] = random_position[1:pinning_site_num]
+end
+
+x_pos_pinning_site = zeros(pinning_site_num, replica_num)
+y_pos_pinning_site = zeros(pinning_site_num, replica_num)
+
+for k in 1:replica_num
+    for i in 1:pinning_site_num
+        x_pos_pinning_site[i,k] = trunc((pinning_site_pos[i,k]-1)/n_x)+1                    #10th position
+        y_pos_pinning_site[i,k] = ((pinning_site_pos[i,k]-1)%n_y)+1                         #1th position
+    end
+end
+
+pinning_site_pos .= pinning_site_pos .+ (N_sd*collect(0:replica_num-1))'
+pinning_site_pos = reshape(CuArray{Int64}(pinning_site_pos), pinning_site_num*replica_num, 1)
+
+global pinning_energy = zeros(N_sd*replica_num, 1) |> CuArray
+global pinning_energy[pinning_site_pos] .= K_anisotropy
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -170,7 +210,7 @@ function compute_tot_energy_spin_glass()
     compute_exchange_energy()
     compute_dipolar_energy()
 
-    global energy_tot = (((-1).*energy_exchange) .+ (dipolar_energy) .- (B_global*z_dir_sd))
+    global energy_tot = (((-1).*energy_exchange) .+ (dipolar_energy) .- (B_global*z_dir_sd) - pinning_energy)
 
     return energy_tot
 end
@@ -253,48 +293,76 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #PLOTTING SPINS HEATMAP 
-function plot_heatmap()
+function plot_final_config_heatmap()
 
-    heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
-    title!("Temp:$Temp, J:$J_NN, h:$B_global")
+    global z_dir_sd_plot = z_dir_sd |> Array
+    global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
+
+
+    anim_2 = @animate for replica in 1:replica_num
+        heatmap(reshape(z_dir_sd_plot[:,replica], n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
+        scatter!(x_pos_pinning_site[:,replica], y_pos_pinning_site[:,replica], label=false)
+        title!("Temp:$Temp, J:$J_NN, h:$B_global, replica:$replica")
+    end
+
+    gif(anim_2, "SD_final_config_L$(n_x)_J$(J_NN)_Temp$(Temp)_B$(B_global)_K$(K_anisotropy)_psNum$(pinning_site_num)_random.gif", fps=2)
 
 end
 
 #------------------------------------------------------------------------------------------------------------------------------#
-#MAIN BODY
 
-#for i in eachindex(Temp_values)
+#plotting fourier transform
+function plot_fft_heatmap()
 
-#    global Temp_index = i
-#    global Temp = Temp_values[Temp_index] 
+    global z_dir_sd_plot = z_dir_sd |> Array
+    global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
 
-    #-----------------------------------------------------------#
-#    #MC BURN STEPS
-#    for j in 1:MC_burns
+    global spin_fft = zeros(n_x, n_y) |> Array
 
-#        one_MC(rng, Temp)
+    for replica in 1:replica_num
+        global spin_fft += fftshift(fft(reshape(z_dir_sd_plot[:,replica], n_x, n_y)))
+    end
+    global spin_fft = spin_fft/replica_num
 
-#    end
-
-    #-----------------------------------------------------------#
-
-#    anim = @animate for snaps in 1:(MC_steps/2000 |>Int64)
-#        for j in 1:2000
-#            one_MC(rng, Temp)                                                     #MONTE CARLO FUNCTION 
-#        end
-#        plot_heatmap()
-#    end
-
-#    gif(anim, "SD_config_L$(n_x)_J$(J_NN)_Temp$(Temp)_B$(B_global).gif", fps=5)
-
-#end
+    heatmap(real(spin_fft), color=:viridis, framestyle=:box, size=(400,400), cbar = false, xtickfont=font(12), ytickfont=font(12))
+    title!("Temp:$Temp, J:$J_NN, h:$B_global")
+end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
-#fourier transform of the domain configuration 
-#z_dir_sd_2D = reshape(z_dir_sd, n_x, n_y)
-#spin_fft = fftshift(fft(z_dir_sd_2D))
+#MATRIX FOR STORING DATA
+specific_heat = zeros(length(Temp_values), 1) |> Array
 
-#heatmap(real(spin_fft), color=:viridis, framestyle=:box, size=(400,400), cbar=false)
-#savefig("Fourier_transform_L$(n_x)_alpha$(alpha_ratio)_Temp$(Temp)_B$(B_global).png")
+#------------------------------------------------------------------------------------------------------------------------------#
+#MAIN BODY
 
+anim = @animate for i in eachindex(Temp_values)
+
+    global Temp_index = i
+    global Temp = Temp_values[Temp_index]
+
+    #-----------------------------------------------------------#
+    #MC BURN STEPS
+    for j in 1:MC_burns
+
+        one_MC(rng, Temp)
+
+    end
+
+    #-----------------------------------------------------------#
+    #MC steps
+    for j in 1:MC_steps
+
+        one_MC(rng, Temp)                                                     #MONTE CARLO FUN$
+        
+    end
+    plot_fft_heatmap()
+end
+
+gif(anim, "SD_config_fft_L$(n_x)_J$(J_NN)_B$(B_global)_K$(K_anisotropy)_psNum$(pinning_site_num)_random.gif", fps=1)
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+plot_final_config_heatmap()
+
+#------------------------------------------------------------------------------------------------------------------------------#
