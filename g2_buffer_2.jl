@@ -1,16 +1,19 @@
-using Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
+using CUDA, Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
 ENV["GKSwstype"] = "100"
 
 rng = MersenneTwister()
 global B_global = 0.0   #globally applied field on the system
 global alpha_ratio = 0.6     #defined parameter for dipolar interaction energy
-global Temp = 0.4      #defined temperature of the system
+global Temp = 0.3      #defined temperature of the system
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #NUMBER OF MC MC STEPS 
 global MC_steps = 100000
 global MC_burns = 100000
+
+#list of delay times
+global delay_times = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 
 #NUMBER OF LOCAL MOMENTS
 n_x = 16
@@ -20,7 +23,7 @@ n_z = 1
 N_sd = n_x*n_y
 
 #NUMBER OF REPLICAS 
-replica_num = 1
+replica_num = 10
 
 #define interaction coefficients of NN and NNN interactions
 global J_NN = 1.0
@@ -30,7 +33,7 @@ dipole_length = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
 global z_dir_sd = dipole_length*[1 for i in 1:N_sd]
-global z_dir_sd = repeat(z_dir_sd, 1, replica_num) |> Array
+global z_dir_sd = repeat(z_dir_sd, replica_num,1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -110,23 +113,23 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 #In this section we change all the 2D matrices to 1D matrices.
 
-mx_sd = reshape(Array{Int64}(mx_sd), N_sd*replica_num, 1)
+mx_sd = reshape(CuArray{Int64}(mx_sd), N_sd*replica_num, 1)
 
-z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1)
+#z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1)
 
-x_pos_sd = reshape(Array{Int64}(x_pos_sd), N_sd*replica_num, 1)
-y_pos_sd = reshape(Array{Int64}(y_pos_sd), N_sd*replica_num, 1)
+x_pos_sd = reshape(CuArray{Int64}(x_pos_sd), N_sd*replica_num, 1)
+y_pos_sd = reshape(CuArray{Int64}(y_pos_sd), N_sd*replica_num, 1)
 
-NN_e = reshape(Array{Int64}(NN_e), N_sd*replica_num, 1)
-NN_n = reshape(Array{Int64}(NN_n), N_sd*replica_num, 1)
-NN_s = reshape(Array{Int64}(NN_s), N_sd*replica_num, 1)
-NN_w = reshape(Array{Int64}(NN_w), N_sd*replica_num, 1)
+NN_e = reshape(CuArray{Int64}(NN_e), N_sd*replica_num, 1)
+NN_n = reshape(CuArray{Int64}(NN_n), N_sd*replica_num, 1)
+NN_s = reshape(CuArray{Int64}(NN_s), N_sd*replica_num, 1)
+NN_w = reshape(CuArray{Int64}(NN_w), N_sd*replica_num, 1)
 
-rand_rep_ref_sd = Array{Int64}(rand_rep_ref_sd)
+rand_rep_ref_sd = CuArray{Int64}(rand_rep_ref_sd)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
-global denom = readdlm("SD_LeknerSum_denom_L$(n_x).txt")
+global denom = readdlm("SD_LeknerSum_denom_L$(n_x).txt") |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -145,7 +148,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE ENERGY DUE TO EXCHANGE 
-global energy_exchange = zeros(N_sd*replica_num, 1) |> Array
+global energy_exchange = zeros(N_sd*replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -158,7 +161,7 @@ end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #MATRIX TO STORE TOTAL ENERGY
-global energy_tot = zeros(N_sd*replica_num, 1) |> Array
+global energy_tot = zeros(N_sd*replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -175,7 +178,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE DELTA ENERGY
-global del_energy = zeros(replica_num, 1) |> Array
+global del_energy = zeros(replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -183,7 +186,7 @@ global del_energy = zeros(replica_num, 1) |> Array
 function compute_del_energy_spin_glass(rng)
     compute_tot_energy_spin_glass()
 
-    global rand_pos =  Array(rand(rng, (1:N_sd), (replica_num, 1)))
+    global rand_pos =  CuArray(rand(rng, (1:N_sd), (replica_num, 1)))
     global r = rand_pos .+ rand_rep_ref_sd
 
     global del_energy = (-2)*energy_tot[r]
@@ -203,7 +206,7 @@ function one_MC(rng, Temp)                                           #benchmark 
     compute_del_energy_spin_glass(rng)
 
     trans_rate = exp.(-del_energy/Temp)
-    global rand_num_flip = Array(rand(rng, Float64, (replica_num, 1)))
+    global rand_num_flip = CuArray(rand(rng, Float64, (replica_num, 1)))
     flipit = sign.(rand_num_flip .- trans_rate)
     global z_dir_sd[r] = flipit.*z_dir_sd[r]
 
@@ -334,64 +337,76 @@ function calculate_g2_point()
 
     global replica_t = reshape(replica_t, N_sd, replica_num)
     global replica_delt = reshape(replica_delt, N_sd, replica_num)
-    global autocorrelation_fn = 0.0
+
+    global fft_replica_t = zeros(n_x, n_y, replica_num) |> Array
+    global fft_replica_delt = zeros(n_x,n_y, replica_num) |> Array
 
     for replica in 1: replica_num
 
         #fourier transform of the replicas a time step apart
-        global fft_replica_t = abs.(fftshift(fft(reshape(replica_t[:,replica], n_x, n_y))))
-        global fft_replica_delt = abs.(fftshift(fft(reshape(replica_delt[:,replica], n_x, n_y))))
+        global fft_replica_t[:,:,replica]= abs.(fftshift(fft(reshape(replica_t[:,replica], n_x, n_y))))
+        global fft_replica_delt[:,:,replica] = abs.(fftshift(fft(reshape(replica_delt[:,replica], n_x, n_y))))
 
-        global cross_intensity_mx = Array{Float64}(undef, n_x, n_y)
-        global self_intensity_mx = Array{Float64}(undef, n_x, n_y)
-    
-        global cross_intensity_mx = fft_replica_t .* fft_replica_delt
-        global self_intensity_mx = fft_replica_t .* fft_replica_t
-
-        global autocorrelation_fn += sum(cross_intensity_mx)/ (sum(fft_replica_t)*sum(fft_replica_delt))
     end
 
-    return (autocorrelation_fn/replica_num)
+    global cross_intensity_mx += (fft_replica_t .* fft_replica_delt) 
+    global self_intensity_mx += fft_replica_t 
+
 end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #matrix to store g2 data
-global g2_correlation = Array{Float64}(undef,0)
+global g2_correlation = zeros(length(delay_times), 1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #MAIN BODY
 #global replica_t = z_dir_sd
+for delay in eachindex(delay_times)
 
-for snaps in 1:(MC_steps/1000 |>Int64)
+    #SPIN ELEMENT DIRECTION IN REPLICAS
+    global z_dir_sd = dipole_length*[(-1)^rand(rng, Int64) for i in 1:N_sd]
+    global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> CuArray
 
-    global replica_t = z_dir_sd[1:N_sd*replica_num]
+    global cross_intensity_mx = zeros(n_x, n_y, replica_num) |> Array
+    global self_intensity_mx = zeros(n_x, n_y, replica_num) |> Array
 
-    for j in 1:1000
-        one_MC(rng, Temp)                                                     #MONTE CARLO FUNCTION 
+    for snaps in 1:(MC_steps/delay_times[delay] |>Int64)
+
+        global replica_t = z_dir_sd[1:N_sd*replica_num] |> Array
+
+        for j in 1:delay_times[delay]
+            one_MC(rng, Temp)                                                     #MONTE CARLO FUNCTION 
+        end
+#       plot_heatmap()
+
+        global replica_delt = z_dir_sd[1:N_sd*replica_num] |> Array
+        
+        calculate_g2_point()
     end
-#    plot_heatmap()
 
-    global replica_delt = z_dir_sd[1:N_sd*replica_num]
+    global g2_value = (cross_intensity_mx/(MC_steps/delay_times[delay] |>Int64)) ./ ((self_intensity_mx/(MC_steps/delay_times[delay] |>Int64)) .^ 2)
+    global g2_value = sum(g2_value, dims=2)
+    global g2_value = sum(g2_value, dims=1)/(n_x*n_y)
 
-    push!(g2_correlation, calculate_g2_point())
+    global g2_correlation[delay] = sum(g2_value)/replica_num
+    
 end
 
 #gif(anim, "SD_config_L$(n_x)_alpha$(alpha_ratio)_T$(Temp).gif", fps=5)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #plotting the autocorrelation data 
-plot(g2_correlation, linewidth=2, framestyle=:box, size=(400,400), 
-    xaxis="MC time", yaxis="g2", xtickfont=font(12), ytickfont=font(12), bg=:transparent,
+plot(delay_times, g2_correlation, linewidth=2, framestyle=:box, size=(400,400), 
+    xaxis="delay time", yaxis="g2", xtickfont=font(12), ytickfont=font(12), bg=:transparent,
     guidefont=font(12), legend=false, title="T:$(Temp), alpha:$(alpha_ratio)")
 
-#savefig("AutoCorrelation_L$(n_x)_alpha$(alpha_ratio)_T$(Temp)_replica$(replica_num).png")
+savefig("AutoCorrelation_L$(n_x)_alpha$(alpha_ratio)_T$(Temp)_replica$(replica_num).png")
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #SAVING THE GENERATED DATA
-#open("AutoCorrelation_L$(n_x)_alpha$(alpha_ratio)_T$(Temp)_replica$(replica_num).txt", "w") do io 					#creating a file to save data
-#    for i in 1:length(g2_correlation)
-#       println(io,i,"\t", g2_correlation[i])
-#    end
-# end
-
+open("AutoCorrelation_L$(n_x)_alpha$(alpha_ratio)_T$(Temp)_replica$(replica_num).txt", "w") do io 					#creating a file to save data
+    for i in 1:length(g2_correlation)
+       println(io,i,"\t",delay_times[i],"\t", g2_correlation[i])
+    end
+end
