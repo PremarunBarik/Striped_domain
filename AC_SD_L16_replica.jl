@@ -19,12 +19,13 @@ global Temp = 0.4      #defined temperature of the system
 #list of delay times
 delay_times_1 = collect(1:9)
 delay_times_2 = Array{Int64}(reshape(collect(1:0.5:9.5) .* (10 .^ collect(1:4))', 18*4, 1))
-global delay_times = vcat(delay_times_1, delay_times_2)
+delay_times_3 = Array{Int64}(collect(1:0.5:5) .* 10^5)
+global delay_times = vcat(delay_times_1, delay_times_2, delay_times_3)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #NUMBER OF MC MC STEPS 
-global MC_steps = 100000
+global MC_steps = 600000
 global MC_burns = 100000
 
 #NUMBER OF LOCAL MOMENTS
@@ -330,3 +331,4 @@ open("AC_SD_L$(n_x)_alpha$(alpha_ratio)_Temp$(Temp)_Replica$(replica_num).txt", 
        println(io,i,"\t", delay_times[i],"\t", auto_correlation[i])
     end
  end
+
