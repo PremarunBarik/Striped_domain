@@ -1,4 +1,4 @@
-using CSV, Plots, DataFrames, DelimitedFiles
+using CSV, Plots, DataFrames, DelimitedFiles, DataStructures
 
 data = CSV.read("qr2_250K_timestamps.csv", DataFrame)
 global mx_MCSteps = Matrix(data)
