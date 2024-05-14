@@ -1,10 +1,10 @@
-using Plots, Random, DelimitedFiles, CUDA
+using Plots, Random, DelimitedFiles
 
 global MCSteps = 100000
-global MCWindow = 1000
+global MCWindow = 100
 
 
-global detector_length = 512
+global detector_length = 256
 global detector_space = detector_length*detector_length
 global detector_pixels = zeros(detector_space, 1)
 
@@ -17,7 +17,7 @@ function One_MC(step)
 
     for i in eachindex(rand_pos)
         if detector_pixels[rand_pos[i]]==0
-            detector_pixels[rand_pos[1]] = step
+            detector_pixels[rand_pos[i]] = step
         end
     end
 
@@ -37,3 +37,5 @@ for step in 1:MCSteps
         download_timestamps()
     end
 end
+
+writedlm("ToyModel5_timestamps.txt", timestamps)
