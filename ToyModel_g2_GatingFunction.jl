@@ -1,13 +1,8 @@
-using Plots, Random, DelimitedFiles, StatsBase
+using CUDA, Random, Plots, FFTW, StatsBase
 
-global MCSteps = 20000
-
-#define switch function
-global Ontime = 100
-global Offtime = 0
-global switch_function = vcat(ones(Ontime, 1), zeros(Offtime), 1)
-global switch_function = repeat(switch_function, (trunc(MCSteps/(Ontime+Offtime)) |> Int64)+1, 1)
-global switch_function = switch_function[1:MCSteps]
+rng = MersenneTwister(1234)
+#total number of Monte Carlo steps
+MC_steps = 20000
 
 #define the detector size to collect the photon timestamps to replicate the experiment
 global detector_length = 512
@@ -15,35 +10,36 @@ global detector_space = detector_length*detector_length
 global detector_pixels = zeros(detector_space, 1)
 global detectorWindow = 300
 
+#list of delay times
+#delay_times_1 = collect(1:9)
+#delay_times_2 = Array{Int64}(reshape(collect(1:0.5:9.5) .* (10 .^ collect(1:2))', 18*2, 1))
+#delay_times_3 = Array{Int64}(reshape(collect(1:0.1:9.9) .* (10 .^ collect(3:4))', 90*2, 1))
+#global delay_times = vcat(delay_times_1, delay_times_2, delay_times_3)
+global delay_times = collect(1:1000)
 
-#collect the intensities throughout all the Monte Carlo steps
-
-#introducing the noise
-#global noise = rand(0:5, MCSteps)
-
-#introduxing the signal
-#global gating_period = 300
+#define the grating function
+#global gating_period = 200
 #x = collect(1:(gating_period))
 
-#signal = 1 .- exp.((x .- (gating_period+20)) ./ 50)
-#signal = repeat(signal, (trunc(MCSteps/(gating_period)) |> Int64)+1 ,1)
-#global signal = 20*signal[1:MCSteps]
-
-#the combined intensities (signal + noise)
-#global intensities = noise .+ signal
-#global intensities = intensities .* switch_function
-#global intensities = Array{Int64}(trunc.(intensities))
-
 #introducing the sinusoidal signal
-mx = collect(1:MCSteps)
 global signal_period = 200
-
+global mx = collect(1:MC_steps)
 global signal = 2 .+ 2*sin.(mx*2*pi/signal_period)
-global noise = rand(1:100, MCSteps)
-global intensities = signal .+ noise
-global intensities = Array{Int64}(trunc.(intensities))
-#global intensities = fill(10, MCSteps,1)
 
+#introducing noise to the signal
+global noise = rand(0:5, MC_steps)
+
+#add the signal and noise together
+global intensities = signal + noise
+
+#create a matrix with 30% of the whole monte carlo steps being 0ne and rest being zero.
+global ones_num = 0.05*MC_steps |> Int64
+global random_filter = zeros(MC_steps)
+global random_filter[randperm(MC_steps)[1:ones_num]] .= 1
+
+#multiply the random filter to the intensities list
+global intensities = intensities .* random_filter
+global intensities = Array{Int64}(trunc.(intensities))
 
 global timestamps = Float64[]
 
@@ -72,7 +68,7 @@ function download_timestamps()
 end
 
 #changing the gated intensities to timestamps
-for step in 1:MCSteps
+for step in 1:MC_steps
     generate_timestamps(step)
 
     if (step % detectorWindow == 0)
@@ -87,14 +83,14 @@ end
 #global timestamps = sort!(timestamps)
 
 #defininng time bins to calculate correlation
-global timebins = collect(0:detectorWindow:maximum(timestamps))
+global timebins = collect(0:1:maximum(timestamps))
 
 #calculating incident photons in those timebins
 hist = fit(Histogram, timestamps, timebins)
 global bin_intensity = hist.weights
 
 #define the lagbins to calculate correlation
-global delay_times = collect(1:30)
+global delay_times = collect(1:1000)
 
 #matrix to store correlation data
 global auto_correlation = zeros(length(delay_times), 1) |> Array
@@ -118,29 +114,8 @@ for delay in eachindex(delay_times)
     println(delay_time)
 end
 
-plot((delay_times[1:(length(delay_times))]*detectorWindow), (auto_correlation[1:(length(auto_correlation))] ), framestyle=:box, 
-    linewidth=2, xlabel="Time delay (MC steps)", ylabel="g2", label="numpy.correlate",
-    xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12), legend=:bottomleft)
+plot((delay_times[1:(length(delay_times))]), (auto_correlation[1:(length(auto_correlation))] ), framestyle=:box, 
+    linewidth=2, xlabel="Time delay (MC steps)", ylabel="g2", legend=false,
+    xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12))
 
-title!("g2 vs Delay time (Decorrelated Data)")
-
-#plot(intensities[1:1000], framestyle=:box,
-#    linewidth=2, xlabel="MC steps", ylabel="Intensity", label="Sinusoidal signal+noise",
-#    xminorticks=9, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-#scatter(timestamps[1:5000], framestyle=:box,
-#    ms=1, msw=0, ylabel="Timestamps", label="Sinusoidal signal",
-#    xminorticks=9, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-#difference = auto_correlation[1:length(data3P)] .- data3P
-#plot(data2P, difference, framestyle=:box, xscale=:log10,
-#    linewidth=2, xlabel="Time delay (MC steps)", ylabel="Difference", label="pycorrelate - correlate",
-#    xminorticks=9, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-#title!("Difference in g2 from correlate and pycorrelate")
-
-#plot(data2P, data3P, framestyle=:box, xscale=:log10,
-#    lw=2, ms=2, msw=0, xlabel="Time delay (MC steps)", ylabel="g2", label="pycorrelate.pcorrelate", legend=:topleft,
-#    xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-#title!("g2 vs Delay time (Decorrelated data)")
+title!("g2 vs Delay time (Sinusoidal signal)")
