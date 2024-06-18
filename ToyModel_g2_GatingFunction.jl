@@ -23,17 +23,20 @@ global delay_times = collect(1:1000)
 
 #introducing the sinusoidal signal
 global signal_period = 200
+global signal_amp = 2
 global mx = collect(1:MC_steps)
-global signal = 2 .+ 2*sin.(mx*2*pi/signal_period)
+global signal = signal_amp .+ signal_amp*sin.(mx*2*pi/signal_period)
 
 #introducing noise to the signal
-global noise = rand(0:5, MC_steps)
+global noise_amp = 50
+global noise = rand(0:noise_amp, MC_steps)
 
 #add the signal and noise together
 global intensities = signal + noise
 
-#create a matrix with 30% of the whole monte carlo steps being 0ne and rest being zero.
-global ones_num = 0.05*MC_steps |> Int64
+#create a matrix with percentage of the whole monte carlo steps being 0ne and rest being zero.
+global percent = 70
+global ones_num = (percent/100)*MC_steps |> Int64
 global random_filter = zeros(MC_steps)
 global random_filter[randperm(MC_steps)[1:ones_num]] .= 1
 
@@ -83,14 +86,15 @@ end
 #global timestamps = sort!(timestamps)
 
 #defininng time bins to calculate correlation
-global timebins = collect(0:1:maximum(timestamps))
+global bin_window = 20
+global timebins = collect(0:10:maximum(timestamps))
 
 #calculating incident photons in those timebins
 hist = fit(Histogram, timestamps, timebins)
 global bin_intensity = hist.weights
 
 #define the lagbins to calculate correlation
-global delay_times = collect(1:1000)
+global delay_times = collect(1:50)
 
 #matrix to store correlation data
 global auto_correlation = zeros(length(delay_times), 1) |> Array
@@ -114,8 +118,16 @@ for delay in eachindex(delay_times)
     println(delay_time)
 end
 
-plot((delay_times[1:(length(delay_times))]), (auto_correlation[1:(length(auto_correlation))] ), framestyle=:box, 
+plot((delay_times[1:(length(delay_times))]*bin_window), (auto_correlation[1:(length(auto_correlation))] ), framestyle=:box, 
     linewidth=2, xlabel="Time delay (MC steps)", ylabel="g2", legend=false,
     xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12))
 
-title!("g2 vs Delay time (Sinusoidal signal)")
+title!("SinSignal amp:$(signal_amp), Noise amp:$(noise_amp), Percent:$(percent)")
+#savefig("g2_SinSignal$(signal_amp)_Noise$(noise_amp)_Percent$(percent).png")
+
+#scatter(signal[1:1000].*random_filter[1:1000], framestyle=:box, xlabel="MC steps", ylabel="Intensity",
+#    guidefont=font(12), tickfont=font(12), legend=false,
+#    ms=2, msw=0, dpi=300)
+#title!("SinSignal amp:$(signal_amp), Noise amp:$(noise_amp), Percent:$(percent)")
+#savefig("SinSignal$(signal_amp)_Noise$(noise_amp)_Percent$(percent).png")
+
