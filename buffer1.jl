@@ -1,188 +1,316 @@
-using Plots, Random, DelimitedFiles, FFTW, StatsBase
+using Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
+ENV["GKSwstype"] = "100"
 
-#define system size
-n_x = 128
-n_y = 128
+global rng = MersenneTwister()
+global B_global = 0.1   #globally applied field on the system
+global alpha_ratio = 0.5     #defined parameter for dipolar interaction energy
+#global Temp = 0.35      #defined temperature of the system
 
-N_sd = n_x * n_y
+#define temperature matrix with particular temperature values
+min_Temp = 0.2
+max_Temp = 0.6
+Temp_step = 20
+#global Temp = 2.2
+Temp_interval = (max_Temp - min_Temp)/Temp_step
+Temp_values = collect(min_Temp:Temp_interval:max_Temp)
+Temp_values = reverse(Temp_values)
 
-#define the detector size to collect the photon timestamps to replicate the experiment
-global detector_length = 512
-global detector_space = detector_length*detector_length
-global detector_pixels = zeros(detector_space, 1)
-global detectorWindow = 100
+#------------------------------------------------------------------------------------------------------------------------------#
 
-function make_dummy_stripes(stripe_width_up, stripe_width_down)
-    global a = fill(1, n_y, stripe_width_up)
-    global b = fill(-1, n_y, stripe_width_down)
+#NUMBER OF MC MC STEPS 
+global MC_steps = 100000
+global MC_burns = 200000
 
-    global mx = hcat(a, b)
-    global mx = repeat(mx, 1, trunc(n_x/(stripe_width_up + stripe_width_down)) +1 |> Int64)
-    global z_dir_sd = mx[:, 1:n_x]
-    #global z_dir_sd = repeat(mx, 1, trunc(n_x/(stripe_width_up + stripe_width_down)) |> Int64)
+#NUMBER OF LOCAL MOMENTS
+n_x = 16
+n_y = 16
+n_z = 1
+
+N_sd = n_x*n_y
+
+#NUMBER OF REPLICAS 
+replica_num = 1
+
+#define interaction co-efficients of NN and NNN interactions
+global J_NN = 1.0
+
+#LENGTH OF DIPOLE 
+dipole_length = 1
+
+#SPIN ELEMENT DIRECTION IN REPLICAS
+global z_dir_sd = dipole_length*[(-1)^rand(rng, Int64) for i in 1:N_sd]
+global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> Array
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#REFERENCE POSITION OF THE SPIN ELEMENTS IN MATRIX
+mx_sd = Array(collect(1:N_sd*replica_num))
+
+#REFERENCE POSITION OF THE SPIN ELEMENTS IN GEOMETRY -- needed to define neighbors and to 
+#plot the spin configuration. So, we don't need to create a Array of these matrices 
+#also no need to repeat for replicas because spin positions are constant over replicas 
+
+x_pos_sd = zeros(N_sd, replica_num)
+y_pos_sd = zeros(N_sd, replica_num)
+
+for k in 1:replica_num
+    for i in 1:N_sd
+        x_pos_sd[i,k] = trunc((i-1)/n_x)+1                    #10th position
+        y_pos_sd[i,k] = ((i-1)%n_y)+1                         #1th position
+    end
 end
 
-#define total number of Monte Carlo Steps
-global MCSteps = 5000
+#------------------------------------------------------------------------------------------------------------------------------#
 
-#define stripe width change interval
-global snap_interval = 1000
+#NEAR NEIGHBOUR CALCULATION
+NN_s = zeros(N_sd,replica_num)
+NN_n = zeros(N_sd,replica_num)
+NN_e = zeros(N_sd,replica_num)
+NN_w = zeros(N_sd,replica_num)
 
-#define box position on the fourier plot
-global box_centre_x = (n_x/2 +1 ) |> Int64
-global box_centre_y = (n_y/2 +1 + (n_x/(16))) |> Int64
+for k in 1:replica_num
+for i in 1:N_sd                             #loop over all the spin ELEMENTS
+        if x_pos_sd[i,k]%n_x == 0
+            r_e =  (x_pos_sd[i,k]-n_x)*n_x + y_pos_sd[i,k]
+        else
+            r_e =  x_pos_sd[i,k]*n_x + y_pos_sd[i,k]
+        end
+        NN_e[i,k] = r_e + (k-1)*N_sd
+        
+        #-----------------------------------------------------------#
 
-global box_half_length = 1
+        if x_pos_sd[i,k]%n_x == 1
+            r_w = (x_pos_sd[i,k]+n_x-2)*n_x + y_pos_sd[i,k]
+        else
+            r_w = (x_pos_sd[i,k]-2)*n_x + y_pos_sd[i,k]
+        end
+        NN_w[i,k] = r_w + (k-1)*N_sd
 
-global x_pos_box = zeros(2*box_half_length + 1, 1)
-global y_pos_box = zeros(2*box_half_length + 1, 1)
+        #-----------------------------------------------------------#
 
-for i in 1:(2*box_half_length + 1)
-    x_pos_box[i] = (box_centre_x - (i - 2*box_half_length))
-    y_pos_box[i] = (box_centre_y - (i - 2*box_half_length))
+        if y_pos_sd[i,k]%n_y == 0
+            r_n =  (x_pos_sd[i,k]-1)*n_x + (y_pos_sd[i,k]-n_y+1)
+        else
+            r_n = (x_pos_sd[i,k]-1)*n_x + y_pos_sd[i,k]+1
+        end
+        NN_n[i,k] = r_n + (k-1)*N_sd
+
+        #-----------------------------------------------------------#
+
+        if y_pos_sd[i,k]%n_y == 1
+            r_s = (x_pos_sd[i,k]-1)*n_x + (y_pos_sd[i,k]+n_y-1)
+        else
+            r_s = (x_pos_sd[i,k]-1)*n_x + y_pos_sd[i,k]-1
+        end
+        NN_s[i,k] = r_s + (k-1)*N_sd
+
+end
 end
 
-global x_pos_box = Array{Int64}(x_pos_box)
-global y_pos_box = Array{Int64}(y_pos_box)
+#------------------------------------------------------------------------------------------------------------------------------#
 
-#calculate the intensity from a box in fourier space
-function intensity_from_box()
-    global photon_count = sum(z_dir_fft[x_pos_box, y_pos_box])
-    return trunc(photon_count) |> Int64
+#REPLICA REFERENCE MATRIX OF RANDOMLY SELECTED SPIN IN MC_STEP
+rand_rep_ref_sd = zeros(replica_num, 1)
+
+for i in eachindex(rand_rep_ref_sd)
+    rand_rep_ref_sd[i] = (i-1)*N_sd
 end
 
-#define the box on the fourier plot (for plotting)
-global y_rect = [minimum(x_pos_box), maximum(x_pos_box), maximum(x_pos_box), minimum(x_pos_box), minimum(x_pos_box)]
-global x_rect = [minimum(y_pos_box), minimum(y_pos_box), maximum(y_pos_box), maximum(y_pos_box), minimum(y_pos_box)]
+#------------------------------------------------------------------------------------------------------------------------------#
+#In this section we change all the 2D matrices to 1D matrices.
 
-#define a matrix to store intensities of Fourier plots throughout MC steps
-global box_intensity = zeros(MCSteps, 1)
+mx_sd = reshape(Array{Int64}(mx_sd), N_sd*replica_num, 1)
 
-for i in 1:(MCSteps/snap_interval |> Int64)
-    
-    #make initial stripes 
-    make_dummy_stripes(8,8)
+z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1) |> Array
 
-    global anim = @animate for j in 1:snap_interval
+x_pos_sd = reshape(Array{Int64}(x_pos_sd), N_sd*replica_num, 1)
+y_pos_sd = reshape(Array{Int64}(y_pos_sd), N_sd*replica_num, 1)
 
-        if (j == 100 || j == 900)
-            make_dummy_stripes(9,7)
-            println(j)
-        end
-        if (j == 200 || j == 800)
-            make_dummy_stripes(10,6)
-        end
-        if (j == 300 || j == 700)
-            make_dummy_stripes(11,5)
-        end
-        if (j == 400 || j == 600)
-            make_dummy_stripes(10,6)
-        end
-        if (j == 500)
-            make_dummy_stripes(11,5)
-        end
+NN_e = reshape(Array{Int64}(NN_e), N_sd*replica_num, 1)
+NN_n = reshape(Array{Int64}(NN_n), N_sd*replica_num, 1)
+NN_s = reshape(Array{Int64}(NN_s), N_sd*replica_num, 1)
+NN_w = reshape(Array{Int64}(NN_w), N_sd*replica_num, 1)
 
-        global step_count = ((i-1)*snap_interval) + j
-        global z_dir_fft = abs.(fftshift(fft(z_dir_sd)))
-        global box_intensity[step_count] = intensity_from_box()
+rand_rep_ref_sd = Array{Int64}(rand_rep_ref_sd)
 
-#        display(heatmap(z_dir_sd, color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400)))
-#        println(step_count)
+#------------------------------------------------------------------------------------------------------------------------------#
 
+global denom = readdlm("SD_LeknerSum_denom_L$(n_x).txt")
+#global denom = 2 .* denom |> Array
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#compute dipolar energy of the system
+function compute_dipolar_energy()
+    z_dir_sd_i = reshape(z_dir_sd, N_sd, 1, replica_num)
+    z_dir_sd_j = reshape(z_dir_sd, 1, N_sd, replica_num)
+
+    global dipolar_energy = (z_dir_sd_i .* z_dir_sd_j) .* denom
+    global dipolar_energy = sum(dipolar_energy, dims = 2)
+
+
+    global dipolar_energy = reshape(dipolar_energy, N_sd*replica_num, 1)
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#MATRIX TO STORE ENERGY DUE TO EXCHANGE 
+global energy_exchange = zeros(N_sd*replica_num, 1) |> Array
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#COMPUTE EXCHANGE ENERGY OF THE SYSTEM
+function compute_exchange_energy()
+    energy_x = z_dir_sd.*(J_NN .* (z_dir_sd[NN_n] .+ z_dir_sd[NN_s] .+ z_dir_sd[NN_e] .+ z_dir_sd[NN_w]))
+
+    global energy_exchange = energy_x
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+#MATRIX TO STORE TOTAL ENERGY
+global energy_tot = zeros(N_sd*replica_num, 1) |> Array
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#COMPUTE THE ENERGY CHANGE OF THE SYSTEM
+function compute_tot_energy_spin_glass()
+    compute_exchange_energy()
+    compute_dipolar_energy()
+
+    global energy_tot = (((-1).*energy_exchange) .+ (alpha_ratio*dipolar_energy) .- (B_global*z_dir_sd))
+
+    return energy_tot
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#MATRIX TO STORE DELTA ENERGY
+global del_energy = zeros(replica_num, 1) |> Array
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#COMPUTE THE ENERGY CHANGE OF THE SYSTEM
+function compute_del_energy_spin_glass(rng)
+    compute_tot_energy_spin_glass()
+
+    global rand_pos =  Array(rand(rng, (1:N_sd), (replica_num, 1)))
+    global r = rand_pos .+ rand_rep_ref_sd
+
+    global del_energy = (-2)*energy_tot[r]
+
+    return del_energy
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#Matrix to keep track of which flipped how many times
+#global flip_count = Array(zeros(N_sd*replica_num, 1))
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#ONE MC STEPS
+function one_MC(rng, Temp)                                           #benchmark time: 438.17 microsecond(20x20), 15.9 ms(50x50)
+    compute_del_energy_spin_glass(rng)
+
+    trans_rate = exp.(-del_energy/Temp)
+    global rand_num_flip = Array(rand(rng, Float64, (replica_num, 1)))
+    flipit = sign.(rand_num_flip .- trans_rate)
+    global z_dir_sd[r] = flipit.*z_dir_sd[r]
+
+#    flipit = (abs.(flipit .- 1))/2
+#    global flip_count[r] = flip_count[r] .+ flipit
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#MATRIX TO STORE DELTA ENERGY
+global glauber = Array(zeros(replica_num, 1))
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#function to flip a spin using KMC subroutine
+function one_MC_kmc(rng, N_sd, replica_num, Temp)
+    compute_tot_energy_spin_glass()
+
+    trans_rate = exp.(-energy_tot/Temp)
+    global glauber = trans_rate./(1 .+ trans_rate)
+    loc = reshape(mx_sd, (N_sd,replica_num)) |> Array
+
+    for k in 1:replica_num
+        loc[:,k] = shuffle!(loc[:,k])
     end
 
-#    heatmap(z_dir_sd, color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
-#    heatmap(z_dir_fft, color=:viridis, cbar=true, framestyle=:box, size=(400,400), alpha=0.5, minorgrid=true, minorticks=10)
-#    plot!(x_rect, y_rect, lw=2, label="Defined box", color=:blue)
-#    gif(anim, "SDdummy_config.gif", fps=1)
-end
+    glauber_cpu = glauber |> Array
+    trans_prob = glauber_cpu[loc] |> Array
+    trans_prob_ps = cumsum(trans_prob, dims=1)
 
-#gif(anim, "SDdummy_config.gif", fps=1)
-#gif(anim, "SDdummy_config_fft.gif", fps=1)
-
-global box_intensity = Array{Int64}(trunc.(box_intensity/100))
-
-global timestamps = Float64[]
-
-#function to generate timestamps on detector space
-function generate_timestamps(step)
-
-    if box_intensity[step] != 0
-        global intensity = box_intensity[step]
-        global rand_pos = rand(1:detector_space, intensity)
-
-        for i in eachindex(rand_pos)
-            if detector_pixels[rand_pos[i]]==0
-                detector_pixels[rand_pos[i]] = step
+    for k in 1:replica_num
+        chk = rand(rng, Float64)*trans_prob_ps[N_sd,k]
+        for l in 1:N_sd
+            if chk <= trans_prob_ps[l,k]
+                z_dir_sd[loc[l,k]] = (-1)*z_dir_sd[loc[l,k]]
+                global flip_count[loc[l,k]] = flip_count[loc[l,k]] + 1
+            break
             end
         end
     end
 
 end
 
-#function to download timestamps after one period of data collection on the detector
-function download_timestamps()
-    global timestamps_window = detector_pixels[ detector_pixels .!=0]
-    global timestamps = vcat(timestamps, timestamps_window)
+#------------------------------------------------------------------------------------------------------------------------------#
 
-    global detector_pixels = zeros(detector_space, 1)
+#function to calculate orientational disorder
+function orientational_order_parameter()
+
+    global AF_bonds_s = abs.((z_dir_sd .* z_dir_sd[NN_s]) .- 1)/2
+    global AF_bonds_n = abs.((z_dir_sd .* z_dir_sd[NN_n]) .- 1)/2
+    global AF_bonds_e = abs.((z_dir_sd .* z_dir_sd[NN_e]) .- 1)/2
+    global AF_bonds_w = abs.((z_dir_sd .* z_dir_sd[NN_w]) .- 1)/2
+
+    global AF_bonds_horizontal = AF_bonds_s .+ AF_bonds_n
+    global AF_bonds_vertical = AF_bonds_e .+ AF_bonds_w
+    global AF_bonds_total = AF_bonds_e .+ AF_bonds_n .+ AF_bonds_s .+ AF_bonds_w
+
+    global O_hv = abs.(sum(AF_bonds_horizontal) - sum(AF_bonds_vertical))/sum(AF_bonds_total)
+    return O_hv
 end
 
-#changing the gated intensities to timestamps
-for step in 1:MCSteps
-    generate_timestamps(step)
+#------------------------------------------------------------------------------------------------------------------------------#
+#MATRIX TO SAVE DATA
+global Order_parameter = zeros(length(Temp_values), 1) |> Array
+#------------------------------------------------------------------------------------------------------------------------------#
 
-    if (step % detectorWindow == 0)
-        download_timestamps()
+for i in eachindex(Temp_values)
+
+    global Temp = Temp_values[i]
+
+    for j in 1:MC_burns
+        one_MC(rng, Temp)
     end
+
+    global Order_parameter_sum = 0.0
+
+    for j in 1:MC_steps
+        one_MC(rng, Temp)
+        global Order_parameter_sum += orientational_order_parameter()
+    end
+
+    Order_parameter[i] = Order_parameter_sum/MC_steps
 end
 
-#writedlm("ToyModel5_timestamps_SinSignal$(signal_period)PlusNoise.txt", timestamps)
-#data = readdlm("/Users/premarunbarik/Documents/Research/Data_Codes/toy_model_autocorrelation/ToyModel5_timestamps_SinSignal.txt")
+#heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
 
-#defininng time bins to calculate correlation
-global timebins = collect(0:1:maximum(timestamps))
+scatter(Temp_values, Order_parameter, ms=2, msw =0, framestyle=:box, label="h: 0.0")
+plot!(Temp_values, Order_parameter, lw=1, label=false,
+    tickfont=font(12), legendfont=font(12), guidefont=font(12),
+    xlabel="Temperature (T)", ylabel="Oreder parameter (O_hv)")
+title!("Orientational order parameter Vs Temp")
 
-#calculating incident photons in those timebins
-hist = fit(Histogram, timestamps, timebins)
-global bin_intensity = hist.weights
+savefig("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).png")
 
-#define the lagbins to calculate correlation
-global delay_times = collect(1:2000)
+open("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).txt", "w") do io 					#creating a file to save data
+    for i in 1:length(Temp_values)
+       println(io,i,"\t", Temp_values,"\t", Order_parameter)
+    end
+ end
 
-#matrix to store correlation data
-global auto_correlation = zeros(length(delay_times), 1) |> Array
-
-#calculation of correlation for the mentioned lagbins
-for delay in eachindex(delay_times)
-    global delay_time = delay_times[delay]
-
-    global zero_mx = vec(zeros(delay_time, 1))
-
-    global bin_intensity_i = vcat(zero_mx, bin_intensity)
-    global bin_intensity_j = vcat(bin_intensity, zero_mx)
-
-    global cross_intensity = bin_intensity_i .* bin_intensity_j
-
-    global denom = sum(bin_intensity[1:(length(bin_intensity)-delay_time)]) *sum(bin_intensity[delay_time:length(bin_intensity)])
-
-    global g2 = (sum(cross_intensity)*(length(bin_intensity)-delay_time))/denom
-    global auto_correlation[delay] = g2
-
-    println(delay_time)
-end
-
-plot((delay_times), (auto_correlation), framestyle=:box, 
-    linewidth=2, xlabel="Time delay (MC steps)", ylabel="g2", legend=false,
-    xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-title!("g2 vs Delay time (Dummy Striped Domain)")
-
-#scatter(timestamps[1:5000], framestyle=:box,
-#    linewidth=2, ms=1, msw=0, xlabel="MC steps", ylabel="Timestamps", label="From defined box",
-#    xminorticks=10, yminorticks=10, minorgrid=true, dpi=300, guidefont=font(12), tickfont=font(12), legendfont= font(12))
-
-#title!("g2 vs Delay time (Dummy Striped domain)")
-
-
-#plot(x_rect, y_rect)
