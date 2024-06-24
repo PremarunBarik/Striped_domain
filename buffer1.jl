@@ -1,16 +1,16 @@
-using Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
-ENV["GKSwstype"] = "100"
+using CUDA, Random, Plots, LinearAlgebra, BenchmarkTools, SpecialFunctions, DelimitedFiles, FFTW
+#ENV["GKSwstype"] = "100"
+CUDA.set_runtime_version!(v"11.7")
 
 global rng = MersenneTwister()
-global B_global = 0.1   #globally applied field on the system
-global alpha_ratio = 0.5     #defined parameter for dipolar interaction energy
-#global Temp = 0.35      #defined temperature of the system
+global B_global = 0.0   #globally applied field on the system
+#global alpha_ratio = 0.5     #defined parameter for dipolar interaction energy
+global Temp = 4.0      #defined temperature of the system
 
 #define temperature matrix with particular temperature values
 min_Temp = 0.2
 max_Temp = 0.6
 Temp_step = 20
-#global Temp = 2.2
 Temp_interval = (max_Temp - min_Temp)/Temp_step
 Temp_values = collect(min_Temp:Temp_interval:max_Temp)
 Temp_values = reverse(Temp_values)
@@ -22,24 +22,57 @@ global MC_steps = 100000
 global MC_burns = 200000
 
 #NUMBER OF LOCAL MOMENTS
-n_x = 16
-n_y = 16
+n_x = 64
+n_y = 64
 n_z = 1
 
 N_sd = n_x*n_y
 
 #NUMBER OF REPLICAS 
-replica_num = 1
+replica_num = 50
 
 #define interaction co-efficients of NN and NNN interactions
-global J_NN = 1.0
+global J_NN = 6.0
 
 #LENGTH OF DIPOLE 
 dipole_length = 1
 
 #SPIN ELEMENT DIRECTION IN REPLICAS
 global z_dir_sd = dipole_length*[(-1)^rand(rng, Int64) for i in 1:N_sd]
-global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> Array
+global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> CuArray
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#define the pinning sites 
+pinning_site_num = 64
+
+#define anisotropy energy of pinning sites
+K_anisotropy = 50
+
+#defining pinning site accross the replicas
+pinning_site_pos = zeros(pinning_site_num, replica_num)
+
+for k in 1:replica_num
+    #selecting spins in random positionsin one single replica
+    random_position = randperm(N_sd)
+    pinning_site_pos[:,k] = random_position[1:pinning_site_num]
+end
+
+x_pos_pinning_site = zeros(pinning_site_num, replica_num)
+y_pos_pinning_site = zeros(pinning_site_num, replica_num)
+
+for k in 1:replica_num
+    for i in 1:pinning_site_num
+        x_pos_pinning_site[i,k] = trunc((pinning_site_pos[i,k]-1)/n_x)+1                    #10th position
+        y_pos_pinning_site[i,k] = ((pinning_site_pos[i,k]-1)%n_y)+1                         #1th position
+    end
+end
+
+pinning_site_pos .= pinning_site_pos .+ (N_sd*collect(0:replica_num-1))'
+pinning_site_pos = reshape(CuArray{Int64}(pinning_site_pos), pinning_site_num*replica_num, 1)
+
+global pinning_energy = zeros(N_sd*replica_num, 1) |> CuArray
+global pinning_energy[pinning_site_pos] .= K_anisotropy
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -119,24 +152,24 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 #In this section we change all the 2D matrices to 1D matrices.
 
-mx_sd = reshape(Array{Int64}(mx_sd), N_sd*replica_num, 1)
+mx_sd = reshape(CuArray{Int64}(mx_sd), N_sd*replica_num, 1)
 
-z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1) |> Array
+z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1) |> CuArray
 
 x_pos_sd = reshape(Array{Int64}(x_pos_sd), N_sd*replica_num, 1)
 y_pos_sd = reshape(Array{Int64}(y_pos_sd), N_sd*replica_num, 1)
 
-NN_e = reshape(Array{Int64}(NN_e), N_sd*replica_num, 1)
-NN_n = reshape(Array{Int64}(NN_n), N_sd*replica_num, 1)
-NN_s = reshape(Array{Int64}(NN_s), N_sd*replica_num, 1)
-NN_w = reshape(Array{Int64}(NN_w), N_sd*replica_num, 1)
+NN_e = reshape(CuArray{Int64}(NN_e), N_sd*replica_num, 1)
+NN_n = reshape(CuArray{Int64}(NN_n), N_sd*replica_num, 1)
+NN_s = reshape(CuArray{Int64}(NN_s), N_sd*replica_num, 1)
+NN_w = reshape(CuArray{Int64}(NN_w), N_sd*replica_num, 1)
 
-rand_rep_ref_sd = Array{Int64}(rand_rep_ref_sd)
+rand_rep_ref_sd = CuArray{Int64}(rand_rep_ref_sd)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 global denom = readdlm("SD_LeknerSum_denom_L$(n_x).txt")
-#global denom = 2 .* denom |> Array
+global denom = 2 .* denom |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -155,7 +188,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE ENERGY DUE TO EXCHANGE 
-global energy_exchange = zeros(N_sd*replica_num, 1) |> Array
+global energy_exchange = zeros(N_sd*replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -168,7 +201,7 @@ end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #MATRIX TO STORE TOTAL ENERGY
-global energy_tot = zeros(N_sd*replica_num, 1) |> Array
+global energy_tot = zeros(N_sd*replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -177,7 +210,7 @@ function compute_tot_energy_spin_glass()
     compute_exchange_energy()
     compute_dipolar_energy()
 
-    global energy_tot = (((-1).*energy_exchange) .+ (alpha_ratio*dipolar_energy) .- (B_global*z_dir_sd))
+    global energy_tot = (((-1).*energy_exchange) .+ (dipolar_energy) .- (B_global*z_dir_sd) .- pinning_energy)
 
     return energy_tot
 end
@@ -185,7 +218,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE DELTA ENERGY
-global del_energy = zeros(replica_num, 1) |> Array
+global del_energy = zeros(replica_num, 1) |> CuArray
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -193,7 +226,7 @@ global del_energy = zeros(replica_num, 1) |> Array
 function compute_del_energy_spin_glass(rng)
     compute_tot_energy_spin_glass()
 
-    global rand_pos =  Array(rand(rng, (1:N_sd), (replica_num, 1)))
+    global rand_pos =  CuArray(rand(rng, (1:N_sd), (replica_num, 1)))
     global r = rand_pos .+ rand_rep_ref_sd
 
     global del_energy = (-2)*energy_tot[r]
@@ -213,7 +246,7 @@ function one_MC(rng, Temp)                                           #benchmark 
     compute_del_energy_spin_glass(rng)
 
     trans_rate = exp.(-del_energy/Temp)
-    global rand_num_flip = Array(rand(rng, Float64, (replica_num, 1)))
+    global rand_num_flip = CuArray(rand(rng, Float64, (replica_num, 1)))
     flipit = sign.(rand_num_flip .- trans_rate)
     global z_dir_sd[r] = flipit.*z_dir_sd[r]
 
@@ -224,7 +257,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE DELTA ENERGY
-global glauber = Array(zeros(replica_num, 1))
+global glauber = CuArray(zeros(replica_num, 1))
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -280,37 +313,36 @@ end
 global Order_parameter = zeros(length(Temp_values), 1) |> Array
 #------------------------------------------------------------------------------------------------------------------------------#
 
-for i in eachindex(Temp_values)
+#for i in eachindex(Temp_values)
 
-    global Temp = Temp_values[i]
+#    global Temp = Temp_values[i]
 
-    for j in 1:MC_burns
-        one_MC(rng, Temp)
-    end
+#    for j in 1:MC_burns
+#        one_MC(rng, Temp)
+#    end
 
-    global Order_parameter_sum = 0.0
+#    global Order_parameter_sum = 0.0
 
-    for j in 1:MC_steps
-        one_MC(rng, Temp)
-        global Order_parameter_sum += orientational_order_parameter()
-    end
+#    for j in 1:MC_steps
+#        one_MC(rng, Temp)
+#        global Order_parameter_sum += orientational_order_parameter()
+#    end
 
-    Order_parameter[i] = Order_parameter_sum/MC_steps
-end
+#    Order_parameter[i] = Order_parameter_sum/MC_steps
+#end
 
 #heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
 
-scatter(Temp_values, Order_parameter, ms=2, msw =0, framestyle=:box, label="h: 0.0")
-plot!(Temp_values, Order_parameter, lw=1, label=false,
-    tickfont=font(12), legendfont=font(12), guidefont=font(12),
-    xlabel="Temperature (T)", ylabel="Oreder parameter (O_hv)")
-title!("Orientational order parameter Vs Temp")
+#scatter(Temp_values, Order_parameter, ms=2, msw =0, framestyle=:box, label="h: 0.0")
+#plot!(Temp_values, Order_parameter, lw=1, label=false,
+#    tickfont=font(12), legendfont=font(12), guidefont=font(12),
+#    xlabel="Temperature (T)", ylabel="Oreder parameter (O_hv)")
+#title!("Orientational order parameter Vs Temp")
 
-savefig("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).png")
+#savefig("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).png")
 
-open("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).txt", "w") do io 					#creating a file to save data
-    for i in 1:length(Temp_values)
-       println(io,i,"\t", Temp_values,"\t", Order_parameter)
-    end
- end
-
+#open("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).txt", "w") do io 					#creating a file to save data
+#    for i in 1:length(Temp_values)
+#       println(io,i,"\t", Temp_values,"\t", Order_parameter)
+#    end
+#end
