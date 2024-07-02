@@ -349,7 +349,7 @@ global num_of_cells = length(fft_cell_list)
 global fft_cell_list = fft_cell_list .+ (N_sd .* collect(0:replica_num-1))'
 #global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
 
-#function to calculate the intensity from Fourier transform
+#function to calculate the intensity from the Fourier transform
 function fft_intensity_calculation()
     global z_dir_sd_plot = z_dir_sd |> CuArray
     global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
@@ -362,7 +362,7 @@ function fft_intensity_calculation()
     end
 
     global fft_intensity = fft_replica[fft_cell_list]
-    global fft_intensity = sum(fft_intensity, dims=1) |> Array
+    global fft_intensity = sum(fft_intensity, dims=1) |> CuArray
 
     return fft_intensity
 end
@@ -401,7 +401,7 @@ for j in 1:MC_burns
 end
 
 for i in 1:(MC_steps/1000 |> Int64)
-    global fft_intensity_sum = zeros(replica_num, 1) |> CuArray
+    global fft_intensity_sum = zeros(1, replica_num) |> CuArray
     for j in 1:1000
         one_MC(rng, Temp)
         global fft_intensity_sum += fft_intensity_calculation()
