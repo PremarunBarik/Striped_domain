@@ -5,7 +5,7 @@ ENV["GKSwstype"] = "100"
 global rng = MersenneTwister()
 global B_global = 0.0   #globally applied field on the system
 #global alpha_ratio = 0.5     #defined parameter for dipolar interaction energy
-global Temp = 4.0      #defined temperature of the system
+global Temp = 2.8      #defined temperature of the system
 
 #define temperature matrix with particular temperature values
 #min_Temp = 
@@ -15,16 +15,16 @@ global Temp = 4.0      #defined temperature of the system
 #Temp_values = collect(min_Temp:Temp_interval:max_Temp)
 #Temp_values = reverse(Temp_values)
 
-Temp_values_1 = collect(1.0:0.1:1.4)
-Temp_values_2 = collect(1.5:0.05:3.5)
-Temp_values_3 = collect(2.6:0.1:4.0)
-Temp_values = vcat(Temp_values_3, Temp_values_2, Temp_values_1)
+#Temp_values_1 = collect(1.0:0.1:1.4)
+#Temp_values_2 = collect(1.5:0.05:3.5)
+#Temp_values_3 = collect(2.6:0.1:4.0)
+#Temp_values = vcat(Temp_values_3, Temp_values_2, Temp_values_1)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #NUMBER OF MC MC STEPS 
-global MC_steps = 200000
-global MC_burns = 200000
+global MC_steps = 2000000
+global MC_burns = 400000
 
 #NUMBER OF LOCAL MOMENTS
 n_x = 32
@@ -33,7 +33,7 @@ n_z = 1
 global N_sd = n_x*n_y
 
 #NUMBER OF REPLICAS 
-global replica_num = 20
+global replica_num = 10
 
 #define interaction co-efficients of NN and NNN interactions
 global J_NN = 6.0
@@ -332,6 +332,7 @@ global fft_y_center = (trunc(n_y/2) + 1) |> Int64
 
 global fft_distance = sqrt.(((x_pos_sd[1:N_sd] .- fft_x_center) .^ 2 ) .+ ((y_pos_sd[1:N_sd] .- fft_y_center) .^ 2))
 
+global stripe_width = 4
 global circle_radius = n_x/(2*stripe_width)   #stripe width depend on the exchange to dipolar interaction coefficient ratio 
                                             #If J= 6.0, stripe width is 4, if J=8.9 stripe width is 8
 global radius_error = 1.0                   #depending on the choice of this we can define how thick the concentric
@@ -346,7 +347,7 @@ end
 
 global num_of_cells = length(fft_cell_list)
 global fft_cell_list = fft_cell_list .+ (N_sd .* collect(0:replica_num-1))'
-global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
+#global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
 
 #function to calculate the intensity from Fourier transform
 function fft_intensity_calculation()
@@ -361,7 +362,7 @@ function fft_intensity_calculation()
     end
 
     global fft_intensity = fft_replica[fft_cell_list]
-    global fft_intensity = sum(fft_intensity, dims=1)
+    global fft_intensity = sum(fft_intensity, dims=1) |> Array
 
     return fft_intensity
 end
@@ -388,27 +389,25 @@ global rand_rep_ref_sd = CuArray{Int64}(rand_rep_ref_sd)
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO SAVE DATA
-global Order_parameter = zeros(length(Temp_values), 1) |> Array
+#global Order_parameter = zeros(length(Temp_values), 1) |> Array
+global fft_intensity_MCsteps = zeros((MC_steps/1000 |> Int64), replica_num) |> Array
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #main body (Monte Carlo steps)
-for i in eachindex(Temp_values)
 
-    global Temp = Temp_values[i]
+for j in 1:MC_burns
+    one_MC(rng, Temp)
+end
 
-    for j in 1:MC_burns
+for i in 1:(MC_steps/1000 |> Int64)
+    global fft_intensity_sum = zeros(replica_num, 1) |> CuArray
+    for j in 1:1000
         one_MC(rng, Temp)
+        global fft_intensity_sum += fft_intensity_calculation()
     end
 
-    global Order_parameter_sum = zeros(1, replica_num) |> Array
-
-    for j in 1:MC_steps
-        one_MC(rng, Temp)
-        global Order_parameter_sum += orientational_order_parameter()
-    end
-
-    Order_parameter[i] = sum(Order_parameter_sum)/(MC_steps*replica_num)
+    global fft_intensity_MCsteps[1,:] = fft_intensity_sum/1000
 end
 
 #heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
@@ -421,31 +420,34 @@ end
 
 #savefig("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).png")
 
-open("SD_OOP_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w") do io 					#creating a file to save data
-    for i in 1:length(Temp_values)
-       println(io,i,"\t", Temp_values[i],"\t", Order_parameter[i])
-    end
-end
+#open("SD_OOP_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w") do io 					#creating a file to save data
+#    for i in 1:length(Temp_values)
+#       println(io,i,"\t", Temp_values[i],"\t", Order_parameter[i])
+#    end
+#end
+
+writedlm("SD_FFTintensity_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", fft_intensity_MCsteps)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #PLOTTING SPINS HEATMAP 
-function plot_final_config_heatmap()
+#function plot_final_config_heatmap()
 
-    global z_dir_sd_plot = z_dir_sd |> Array
-    global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
+#    global z_dir_sd_plot = z_dir_sd |> Array
+#    global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
 
 
-    anim_2 = @animate for replica in 1:replica_num
-        heatmap(reshape(z_dir_sd_plot[:,replica], n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
-        scatter!(x_pos_pinning_site[:,replica], y_pos_pinning_site[:,replica], label=false, ms= 5, msw=0)
-        title!("Temp:$Temp, J:$J_NN, h:$B_global, replica:$replica")
-    end
+#    anim_2 = @animate for replica in 1:replica_num
+#        heatmap(reshape(z_dir_sd_plot[:,replica], n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
+#        scatter!(x_pos_pinning_site[:,replica], y_pos_pinning_site[:,replica], label=false, ms= 5, msw=0)
+#        title!("Temp:$Temp, J:$J_NN, h:$B_global, replica:$replica")
+#    end
 
-    gif(anim_2, "SD_FinalConfigL$(n_x)J$(J_NN)Temp$(Temp)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).gif", fps=2)
+#    gif(anim_2, "SD_FinalConfigL$(n_x)J$(J_NN)Temp$(Temp)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).gif", fps=2)
 
-end
+#end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
-plot_final_config_heatmap()
+#plot_final_config_heatmap()
+
