@@ -407,7 +407,7 @@ for i in 1:(MC_steps/1000 |> Int64)
         global fft_intensity_sum += fft_intensity_calculation()
     end
 
-    global fft_intensity_MCsteps[1,:] = fft_intensity_sum/1000
+    global fft_intensity_MCsteps[i,:] = fft_intensity_sum/1000
 end
 
 #heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
