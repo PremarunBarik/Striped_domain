@@ -371,9 +371,12 @@ function fft_intensity_alternative()
     global z_dir_sd_fft = reshape(z_dir_sd, n_x, n_y, replica_num) |> Array
     global z_dir_sd_fft = fftshift.(fft.(eachslice(z_dir_sd_fft, dims=3)))
     global z_dir_sd_fft = abs.(reduce((x,y) -> cat(x, y, dims=3), z_dir_sd_fft))
+    global z_dir_sd_fft_av = sum(z_dir_sd_fft, dims=1)
+    global z_dir_sd_fft_av = sum(z_dir_sd_fft_av, dims=2)/N_sd
+    global z_dir_sd_fft = z_dir_sd_fft ./ z_dir_sd_fft_av
 
-    global fft_intensity = z_dir_sd_fft[fft_cell_list]
-    global fft_intensity = sum(fft_intensity, dims=1) |> Array
+    global fft_intensity = z_dir_sd_fft[fft_cell_list] 
+    global fft_intensity = sum(fft_intensity, dims=1)/num_of_cells |> Array
 
 end
 #------------------------------------------------------------------------------------------------------------------------------#
