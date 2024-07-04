@@ -23,7 +23,7 @@ global Temp = 2.8      #defined temperature of the system
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #NUMBER OF MC MC STEPS 
-global MC_steps = 2000000
+global MC_steps = 10000000
 global MC_burns = 400000
 
 #NUMBER OF LOCAL MOMENTS
@@ -33,7 +33,7 @@ n_z = 1
 global N_sd = n_x*n_y
 
 #NUMBER OF REPLICAS 
-global replica_num = 10
+global replica_num = 20
 
 #define interaction co-efficients of NN and NNN interactions
 global J_NN = 6.0
@@ -309,7 +309,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #function to calculate the fourier transform of the stripes
-function calculate_fft()
+function plot_fft()
 
     global z_dir_sd_plot = z_dir_sd |> Array
     global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
@@ -349,7 +349,7 @@ global num_of_cells = length(fft_cell_list)
 global fft_cell_list = fft_cell_list .+ (N_sd .* collect(0:replica_num-1))'
 #global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
 
-#function to calculate the intensity from the Fourier transform
+#function to calculate the intensity from Fourier transform
 function fft_intensity_calculation()
     global z_dir_sd_plot = z_dir_sd |> CuArray
     global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
@@ -362,9 +362,19 @@ function fft_intensity_calculation()
     end
 
     global fft_intensity = fft_replica[fft_cell_list]
-    global fft_intensity = sum(fft_intensity, dims=1) |> CuArray
+    global fft_intensity = sum(fft_intensity, dims=1) |> Array
 
     return fft_intensity
+end
+
+function fft_intensity_alternative()
+    global z_dir_sd_fft = reshape(z_dir_sd, n_x, n_y, replica_num) |> Array
+    global z_dir_sd_fft = fftshift.(fft.(eachslice(z_dir_sd_fft, dims=3)))
+    global z_dir_sd_fft = abs.(reduce((x,y) -> cat(x, y, dims=3), z_dir_sd_fft))
+
+    global fft_intensity = z_dir_sd_fft[fft_cell_list]
+    global fft_intensity = sum(fft_intensity, dims=1) |> Array
+
 end
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -394,15 +404,20 @@ global fft_intensity_MCsteps = zeros((MC_steps/1000 |> Int64), replica_num) |> A
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
+#define the number of Monte Carlo steps to average the fourier intensity over
+global bin_window = 1000
+
 #main body (Monte Carlo steps)
 
 for j in 1:MC_burns
     one_MC(rng, Temp)
 end
 
-for i in 1:(MC_steps/1000 |> Int64)
-    global fft_intensity_sum = zeros(1, replica_num) |> CuArray
-    for j in 1:1000
+for i in 1:(MC_steps/bin_window |> Int64)
+
+    global fft_intensity_sum = zeros(1, replica_num) |> Array
+
+    for j in 1:bin_window
         one_MC(rng, Temp)
         global fft_intensity_sum += fft_intensity_calculation()
     end
@@ -410,7 +425,9 @@ for i in 1:(MC_steps/1000 |> Int64)
     global fft_intensity_MCsteps[i,:] = fft_intensity_sum/1000
 end
 
-#heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
+#------------------------------------------------------------------------------------------------------------------------------#
+
+writedlm("SD_FFTintensity_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", fft_intensity_MCsteps)
 
 #scatter(Temp_values, Order_parameter, ms=2, msw =0, framestyle=:box, label="h: 0.0")
 #plot!(Temp_values, Order_parameter, lw=1, label=false,
@@ -420,13 +437,43 @@ end
 
 #savefig("OrientationalOrderParamater_L$(n_x)_alpha$(alpha_ratio)_h$(B_global).png")
 
-#open("SD_OOP_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w") do io 					#creating a file to save data
-#    for i in 1:length(Temp_values)
-#       println(io,i,"\t", Temp_values[i],"\t", Order_parameter[i])
-#    end
-#end
+#------------------------------------------------------------------------------------------------------------------------------#
+global bin_intensity = fft_intensity_MCsteps
 
-writedlm("SD_FFTintensity_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", fft_intensity_MCsteps)
+#define the lagbins to calculate autocorrelation
+global delay_times = collect(1:1000)
+
+#matrix to store correlation data
+global auto_correlation = zeros(length(delay_times), 1) |> Array
+global auto_correlation_replica = zeros(length(delay_times), replica_num) |> Array
+
+#calculation of correlation for the mentioned lagbins
+for delay in eachindex(delay_times)
+    global delay_time = delay_times[delay]
+
+    global zero_mx = zeros(delay_time, replica_num) |> Array
+
+    global bin_intensity_i = vcat(zero_mx, bin_intensity) |> Array
+    global bin_intensity_j = vcat(bin_intensity, zero_mx) |> Array
+
+    global cross_intensity = bin_intensity_i .* bin_intensity_j
+
+    global denom = sum(bin_intensity[1:end-delay_time,:], dims=1) .* sum(bin_intensity[delay_time:end, :], dims=1)
+
+    global g2 = (sum(cross_intensity, dims=1) ./ denom) * (length(bin_intensity[:,1])-delay_time)
+    global auto_correlation[delay] = sum(g2)/replica_num
+    global auto_correlation_replica[delay,:] = g2 
+
+    println(delay_time)
+end
+
+open("SD_autocorrelation_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w") do io 					#creating a file to save data
+    for i in 1:length(Temp_values)
+       println(io,i,"\t", delay_times[i],"\t", auto_correlation[i])
+    end
+end
+
+writedlm("SD_autocorrelationReplica_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", auto_correlation_replica)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -447,7 +494,46 @@ writedlm("SD_FFTintensity_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)rep
 
 #end
 
+#plot_final_config_heatmap()
+
 #------------------------------------------------------------------------------------------------------------------------------#
 
-#plot_final_config_heatmap()
+global z_dir_sd_plot = z_dir_sd |> Array
+global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
+
+
+file = open("SD_final_spins_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+
+    # Iterate through the rows of the matrix
+    for row in eachrow(z_dir_sd_plot)
+        # Join elements with a tab delimiter and write to the file
+        println(file, join(row, "\t"))
+    end
+
+    # Close the file
+close(file)
+
+file = open("SD_XposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+
+    # Iterate through the rows of the matrix
+    for row in eachrow(x_pos_pinning_site)
+        # Join elements with a tab delimiter and write to the file
+        println(file, join(row, "\t"))
+    end
+
+    # Close the file
+close(file)
+
+file = open("SD_YposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+
+    # Iterate through the rows of the matrix
+    for row in eachrow(y_pos_pinning_site)
+        # Join elements with a tab delimiter and write to the file
+        println(file, join(row, "\t"))
+    end
+
+    # Close the file
+close(file)
+
+#------------------------------------------------------------------------------------------------------------------------------#
 
