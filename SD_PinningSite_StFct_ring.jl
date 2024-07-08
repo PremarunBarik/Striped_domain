@@ -384,7 +384,7 @@ end
 
 #savefig("OrientationalOrderParamaterL$(n_x)J$(J_NN)psNum$(pinning_site_num)repNum$(replica_num)h$(B_global).png")
 
-open("SD_StFct_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w") do io 					#creating a file to save data
+open("SD_StFct_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.txt", "w") do io 					#creating a file to save data
     for i in 1:length(Temp_values)
        println(io,i,"\t", Temp_values[i],"\t", Order_parameter[i])
     end
@@ -405,7 +405,7 @@ function plot_final_config_heatmap()
         title!("Temp:$Temp, J:$J_NN, h:$B_global, replica:$replica")
     end
 
-    gif(anim_2, "SD_StFct_FinalConfigL$(n_x)J$(J_NN)Temp$(Temp)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).gif", fps=2)
+    gif(anim_2, "SD_StFct_FinalConfigL$(n_x)J$(J_NN)Temp$(Temp)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.gif", fps=2)
 
 end
 
@@ -418,7 +418,7 @@ plot_final_config_heatmap()
 global z_dir_sd_plot = z_dir_sd |> Array
 global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
 
-file = open("SD_StFct_FinalSpins_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+file = open("SD_StFct_FinalSpins_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.txt", "w")
 
     # Iterate through the rows of the matrix
     for row in eachrow(z_dir_sd_plot)
@@ -430,7 +430,7 @@ close(file)
 
 if pinning_site_num!=0
     
-    file = open("SD_StFct_XposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+    file = open("SD_StFct_XposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.txt", "w")
 
         # Iterate through the rows of the matrix
         for row in eachrow(x_pos_pinning_site)
@@ -440,7 +440,7 @@ if pinning_site_num!=0
         # Close the file
     close(file)
 
-    file = open("SD_StFct_YposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num).txt", "w")
+    file = open("SD_StFct_YposPinningSite_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.txt", "w")
 
         # Iterate through the rows of the matrix
         for row in eachrow(y_pos_pinning_site)
