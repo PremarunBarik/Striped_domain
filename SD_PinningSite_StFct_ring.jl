@@ -310,13 +310,19 @@ global num_of_cells = length(fft_cell_list)
 global fft_cell_list = fft_cell_list .+ (N_sd .* collect(0:replica_num-1))'
 #global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
 
+a = ones(n_x, stripe_width)
+b = (-1)*ones(n_x, stripe_width)
+z_dir_sd_perfect = hcat(a, b)
+z_dir_sd_perfect = repeat(z_dir_sd_perfect, 1, n_y/(2*stripe_width) |> Int64)
+
+z_dir_sd_perfect_fft = abs.(fftshift(fft(z_dir_sd_perfect)))
+global z_dir_sd_fft_max = maximum(z_dir_sd_perfect_fft)
+
 function fft_intensity_alternative()
     global z_dir_sd_fft = reshape(z_dir_sd, n_x, n_y, replica_num) |> Array
     global z_dir_sd_fft = fftshift.(fft.(eachslice(z_dir_sd_fft, dims=3)))
     global z_dir_sd_fft = abs.(reduce((x,y) -> cat(x, y, dims=3), z_dir_sd_fft))
-    global z_dir_sd_fft_av = sum(z_dir_sd_fft, dims=1)
-    global z_dir_sd_fft_av = sum(z_dir_sd_fft_av, dims=2)/N_sd
-    global z_dir_sd_fft = z_dir_sd_fft ./ z_dir_sd_fft_av
+    global z_dir_sd_fft = z_dir_sd_fft ./ zz_dir_sd_fft_max
 
     global fft_intensity = z_dir_sd_fft[fft_cell_list] 
     global fft_intensity = sum(fft_intensity, dims=1)/num_of_cells |> Array
