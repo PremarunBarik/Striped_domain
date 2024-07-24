@@ -423,6 +423,7 @@ for i in 1:(MC_steps/bin_window |> Int64)
     for j in 1:bin_window
         one_MC(rng, Temp)    #32x32 - 10replicas: 1.8ms - 20replicas: 3.37ms
                              #64x64 - 10replicas: 16.3ms - 20replicas:21.1ms
+                             #128x128 - 1replica: 18.91ms - 5 replicas: 67.25ms (maximum can be fitted into one GPU) 
         global fft_intensity_sum += fft_intensity_calculation()
     end
 
