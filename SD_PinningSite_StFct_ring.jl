@@ -16,10 +16,10 @@ global B_global = 0.0   #globally applied field on the system
 #Temp_values = reverse(Temp_values)
 
 Temp_values_1 = collect(1.0:0.1:1.4)
-Temp_values_2 = collect(1.5:0.1:3.5)
+Temp_values_2 = collect(1.5:0.05:3.5)
 Temp_values_3 = collect(3.6:0.1:4.0)
 Temp_values = vcat(Temp_values_1, Temp_values_2, Temp_values_3)
-global Temp_values = reverse(Temp_values)
+global Temp_values = reverse(Temp_values) |> Array{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -45,7 +45,7 @@ global dipole_length = 1
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #define the pinning sites 
-pinning_site_num = 0
+pinning_site_num = 40
 
 #define anisotropy energy of pinning sites
 K_anisotropy = 50
@@ -59,8 +59,8 @@ for k in 1:replica_num
     pinning_site_pos[:,k] = random_position[1:pinning_site_num]
 end
 
-x_pos_pinning_site = zeros(pinning_site_num, replica_num)
-y_pos_pinning_site = zeros(pinning_site_num, replica_num)
+x_pos_pinning_site = zeros(pinning_site_num, replica_num) |> Array{Int32}
+y_pos_pinning_site = zeros(pinning_site_num, replica_num) |> Array{Int32}
 
 for k in 1:replica_num
     for i in 1:pinning_site_num
@@ -70,9 +70,9 @@ for k in 1:replica_num
 end
 
 pinning_site_pos .= pinning_site_pos .+ (N_sd*collect(0:replica_num-1))'
-global pinning_site_pos = reshape(CuArray{Int64}(pinning_site_pos), pinning_site_num*replica_num, 1)
+global pinning_site_pos = reshape(CuArray{Int32}(pinning_site_pos), pinning_site_num*replica_num, 1)
 
-global pinning_energy = zeros(N_sd*replica_num, 1) |> CuArray
+global pinning_energy = zeros(N_sd*replica_num, 1) |> CuArray{Float32}
 global pinning_energy[pinning_site_pos] .= K_anisotropy
 
 #------------------------------------------------------------------------------------------------------------------------------#
@@ -80,8 +80,8 @@ global pinning_energy[pinning_site_pos] .= K_anisotropy
 #SPIN ELEMENT DIRECTION IN REPLICAS
 function initialize_spin_config()
 
-    global z_dir_sd = dipole_length*[(-1)^rand(rng, Int64) for i in 1:N_sd]
-    global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> CuArray
+    global z_dir_sd = dipole_length*[(-1)^rand(rng, Int32) for i in 1:N_sd]
+    global z_dir_sd = repeat(z_dir_sd, replica_num, 1) |> CuArray{Float32}
 
     global z_dir_sd[pinning_site_pos] .= dipole_length
 end
@@ -89,14 +89,14 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #REFERENCE POSITION OF THE SPIN ELEMENTS IN MATRIX
-mx_sd = Array(collect(1:N_sd*replica_num))
+mx_sd = Array{Int32}(collect(1:N_sd*replica_num))
 
 #REFERENCE POSITION OF THE SPIN ELEMENTS IN GEOMETRY -- needed to define neighbors and to 
 #plot the spin configuration. So, we don't need to create a Array of these matrices 
 #also no need to repeat for replicas because spin positions are constant over replicas 
 
-x_pos_sd = zeros(N_sd, replica_num)
-y_pos_sd = zeros(N_sd, replica_num)
+x_pos_sd = zeros(N_sd, replica_num) |> Array{Int32}
+y_pos_sd = zeros(N_sd, replica_num) |> Array{Int32}
 
 for k in 1:replica_num
     for i in 1:N_sd
@@ -164,7 +164,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 global denom = readdlm("SD_LeknerSum_denom_L$(n_x).txt")
-global denom = 2 .* denom |> CuArray
+global denom = 2 .* denom |> CuArray{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -177,13 +177,13 @@ function compute_dipolar_energy()
     global dipolar_energy = sum(dipolar_energy, dims = 2)
 
 
-    global dipolar_energy = reshape(dipolar_energy, N_sd*replica_num, 1)
+    global dipolar_energy = reshape(dipolar_energy, N_sd*replica_num, 1) |> CuArray{Float32}
 end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE ENERGY DUE TO EXCHANGE 
-global energy_exchange = zeros(N_sd*replica_num, 1) |> CuArray
+global energy_exchange = zeros(N_sd*replica_num, 1) |> CuArray{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -196,7 +196,7 @@ end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 #MATRIX TO STORE TOTAL ENERGY
-global energy_tot = zeros(N_sd*replica_num, 1) |> CuArray
+global energy_tot = zeros(N_sd*replica_num, 1) |> CuArray{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -213,7 +213,7 @@ end
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO STORE DELTA ENERGY
-global del_energy = zeros(replica_num, 1) |> CuArray
+global del_energy = zeros(replica_num, 1) |> CuArray{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
@@ -221,7 +221,7 @@ global del_energy = zeros(replica_num, 1) |> CuArray
 function compute_del_energy_spin_glass(rng)
     compute_tot_energy_spin_glass()
 
-    global rand_pos =  CuArray(rand(rng, (1:N_sd), (replica_num, 1)))
+    global rand_pos =  CuArray{Int32}(rand(rng, (1:N_sd), (replica_num, 1)))
     global r = rand_pos .+ rand_rep_ref_sd
 
     global del_energy = (-2)*energy_tot[r]
@@ -241,7 +241,7 @@ function one_MC(rng, Temp)                                           #benchmark 
     compute_del_energy_spin_glass(rng)
 
     trans_rate = exp.(-del_energy/Temp)
-    global rand_num_flip = CuArray(rand(rng, Float64, (replica_num, 1)))
+    global rand_num_flip = CuArray{Float32}(rand(rng, Float64, (replica_num, 1)))
     flipit = sign.(rand_num_flip .- trans_rate)
     global z_dir_sd[r] = flipit.*z_dir_sd[r]
 
@@ -251,112 +251,101 @@ end
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
-#MATRIX TO STORE DELTA ENERGY
-global glauber = CuArray(zeros(replica_num, 1))
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#function to flip a spin using KMC subroutine
-function one_MC_kmc(rng, N_sd, replica_num, Temp)
-    compute_tot_energy_spin_glass()
-
-    trans_rate = exp.(-energy_tot/Temp)
-    global glauber = trans_rate./(1 .+ trans_rate)
-    loc = reshape(mx_sd, (N_sd,replica_num)) |> Array
-
-    for k in 1:replica_num
-        loc[:,k] = shuffle!(loc[:,k])
-    end
-
-    glauber_cpu = glauber |> Array
-    trans_prob = glauber_cpu[loc] |> Array
-    trans_prob_ps = cumsum(trans_prob, dims=1)
-
-    for k in 1:replica_num
-        chk = rand(rng, Float64)*trans_prob_ps[N_sd,k]
-        for l in 1:N_sd
-            if chk <= trans_prob_ps[l,k]
-                z_dir_sd[loc[l,k]] = (-1)*z_dir_sd[loc[l,k]]
-                global flip_count[loc[l,k]] = flip_count[loc[l,k]] + 1
-            break
-            end
-        end
-    end
-
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
 #define the circle to calculate intensity from
-global fft_x_center = (trunc(n_x/2) + 1) |> Int64
-global fft_y_center = (trunc(n_y/2) + 1) |> Int64
+global fft_x_center = (trunc(n_x/2) + 1) |> Int32
+global fft_y_center = (trunc(n_y/2) + 1) |> Int32
 
 global fft_distance = sqrt.(((x_pos_sd[1:N_sd] .- fft_x_center) .^ 2 ) .+ ((y_pos_sd[1:N_sd] .- fft_y_center) .^ 2))
 
 global stripe_width = 4
 global circle_radius = n_x/(2*stripe_width)   #stripe width depend on the exchange to dipolar interaction coefficient ratio 
                                             #If J= 6.0, stripe width is 4, if J=8.9 stripe width is 8
-global radius_error = 1.0                   #depending on the choice of this we can define how thick the concentric
+global radius_error = 0.9                   #depending on the choice of this we can define how thick the concentric
                                             #circle would be on the fourier plot
-global fft_cell_list = Int64[]              #list of matrix cells where we collect the intensities from the Fourier plots
+global fft_cell_list = Int32[]              #list of matrix cells where we collect the intensities from the Fourier plots
 
 for i in 1:N_sd
     if fft_distance[i]<= (circle_radius + radius_error) && fft_distance[i] >= (circle_radius - radius_error)
         append!(fft_cell_list, i)
     end
 end
-
-global num_of_cells = length(fft_cell_list)
 global fft_cell_list = fft_cell_list .+ (N_sd .* collect(0:replica_num-1))'
-#global fft_cell_list = reshape(fft_cell_list, num_of_cells*replica_num, 1)
 
-a = ones(n_x, stripe_width)
-b = (-1)*ones(n_x, stripe_width)
-z_dir_sd_perfect = hcat(a, b)
-z_dir_sd_perfect = repeat(z_dir_sd_perfect, 1, n_y/(2*stripe_width) |> Int64)
-
-z_dir_sd_perfect_fft = abs.(fftshift(fft(z_dir_sd_perfect)))
-global z_dir_sd_fft_max = maximum(z_dir_sd_perfect_fft)
-
-function fft_intensity_alternative()
-    global z_dir_sd_fft = reshape(z_dir_sd, n_x, n_y, replica_num) |> Array
+function fft_calculation()
+    global z_dir_sd_fft = reshape(z_dir_sd, n_x, n_y, replica_num) |> Array{Float32}
     global z_dir_sd_fft = fftshift.(fft.(eachslice(z_dir_sd_fft, dims=3)))
     global z_dir_sd_fft = abs.(reduce((x,y) -> cat(x, y, dims=3), z_dir_sd_fft))
-    global z_dir_sd_fft = z_dir_sd_fft ./ zz_dir_sd_fft_max
-
-    global fft_intensity = z_dir_sd_fft[fft_cell_list] 
-    global fft_intensity = sum(fft_intensity, dims=1)/num_of_cells |> Array
-
+    global z_dir_sd_fft = z_dir_sd_fft ./ sum(z_dir_sd_fft, dims=(1,2))
+    
+    return z_dir_sd_fft
 end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+function fft_intensity_ring()
+
+    global fft_intensity = StFct_sum[fft_cell_list] |> Array{Float32}
+    global fft_intensity = sum(fft_intensity, dims=1) |> Array{Float32}
+    global fft_intensity_ReplicaAv = sum(fft_intensity) / replica_num
+    global fft_intensity_uncertaity = (fft_intensity .- fft_intensity_ReplicaAv) .^ 2
+    global fft_intensity_uncertaity = sqrt(sum(fft_intensity_uncertaity)/replica_num)
+    return fft_intensity_ReplicaAv, fft_intensity_uncertaity
+end
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#plotting fourier transform
+function plot_fft()
+
+    global StFct_ReplicaAv = reshape(sum(StFct_sum, dims=3)/replica_num, n_x, n_y)
+
+    # Define circle parameters
+    circle_center = (fft_x_center, fft_y_center)
+    radius1 = n_x/(2*stripe_width) + radius_error
+    radius2 = n_x/(2*stripe_width) - radius_error
+    theta = LinRange(0, 2π, 100)
+    circle1_x = circle_center[1] .+ radius1 .* cos.(theta)
+    circle1_y = circle_center[2] .+ radius1 .* sin.(theta)
+    circle2_x = circle_center[1] .+ radius2 .* cos.(theta)
+    circle2_y = circle_center[2] .+ radius2 .* sin.(theta)
+
+    heatmap(StFct_ReplicaAv, color=:viridis, framestyle=:box, size=(500,400),
+            dpi=300, alpha=1.0)
+    plot!(circle1_x, circle1_y, lw=2, lc=:red, legend=false)
+    plot!(circle2_x, circle2_y, lw=2, lc=:red, legend=false)
+    title!("32x32 system, Temp:$Temp, pinning sites:$pinning_site_num")
+end
+
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #initialize the spin matrix before starting the Monte Carlo steps
 initialize_spin_config()
 
 #In this section we change all the 2D matrices to 1D matrices.
-global mx_sd = reshape(CuArray{Int64}(mx_sd), N_sd*replica_num, 1)
+global mx_sd = reshape(CuArray{Int32}(mx_sd), N_sd*replica_num, 1)
 
-global z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1) |> CuArray
+global z_dir_sd = reshape(z_dir_sd, N_sd*replica_num, 1) |> CuArray{Float32}
 
-global x_pos_sd = reshape(Array{Int64}(x_pos_sd), N_sd*replica_num, 1)
-global y_pos_sd = reshape(Array{Int64}(y_pos_sd), N_sd*replica_num, 1)
+global x_pos_sd = reshape(Array{Int32}(x_pos_sd), N_sd*replica_num, 1)
+global y_pos_sd = reshape(Array{Int32}(y_pos_sd), N_sd*replica_num, 1)
 
-global NN_e = reshape(CuArray{Int64}(NN_e), N_sd*replica_num, 1)
-global NN_n = reshape(CuArray{Int64}(NN_n), N_sd*replica_num, 1)
-global NN_s = reshape(CuArray{Int64}(NN_s), N_sd*replica_num, 1)
-global NN_w = reshape(CuArray{Int64}(NN_w), N_sd*replica_num, 1)
+global NN_e = reshape(CuArray{Int32}(NN_e), N_sd*replica_num, 1)
+global NN_n = reshape(CuArray{Int32}(NN_n), N_sd*replica_num, 1)
+global NN_s = reshape(CuArray{Int32}(NN_s), N_sd*replica_num, 1)
+global NN_w = reshape(CuArray{Int32}(NN_w), N_sd*replica_num, 1)
 
-global rand_rep_ref_sd = CuArray{Int64}(rand_rep_ref_sd)
+global rand_rep_ref_sd = CuArray{Int32}(rand_rep_ref_sd)
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #MATRIX TO SAVE DATA
-global Order_parameter = zeros(length(Temp_values), 1) |> Array
+global StFct_ring = zeros(length(Temp_values), 1) |> Array{Float32}
+global StFct_ring_uncertainty = zeros(length(Temp_values), 1) |> Array{Float32}
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
 #main body (Monte Carlo steps)
-for i in eachindex(Temp_values)
+anim = @animate for i in eachindex(Temp_values)
 
     global Temp = Temp_values[i]
 
@@ -364,54 +353,26 @@ for i in eachindex(Temp_values)
         one_MC(rng, Temp)
     end
 
-    global Order_parameter_sum = zeros(1, replica_num) |> Array
+    global StFct_sum = zeros(n_x, n_y, replica_num) |> Array{Float32}
 
     for j in 1:MC_steps
         one_MC(rng, Temp)
-        global Order_parameter_sum += fft_intensity_alternative()
+        global StFct_sum += fft_calculation()
     end
 
-    Order_parameter[i] = sum(Order_parameter_sum)/(MC_steps*replica_num)
+    global StFct_sum = StFct_sum / MC_steps
+    plot_fft()
+
+    StFct_ring[i], StFct_ring_uncertainty[i] = fft_intensity_ring()
 end
 
-#heatmap(reshape(z_dir_sd, n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
-
-#scatter(Temp_values, Order_parameter, ms=2, msw =0, framestyle=:box, label="h: 0.0")
-#plot!(Temp_values, Order_parameter, lw=1, label=false,
-#    tickfont=font(12), legendfont=font(12), guidefont=font(12),
-#    xlabel="Temperature (T)", ylabel="Oreder parameter (O_hv)")
-#title!("Orientational order parameter Vs Temp")
-
-#savefig("OrientationalOrderParamaterL$(n_x)J$(J_NN)psNum$(pinning_site_num)repNum$(replica_num)h$(B_global).png")
+gif(anim, "SD_FFT_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.gif", fps=2)
 
 open("SD_StFct_L$(n_x)J$(J_NN)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.txt", "w") do io 					#creating a file to save data
     for i in 1:length(Temp_values)
-       println(io,i,"\t", Temp_values[i],"\t", Order_parameter[i])
+       println(io,i,"\t", Temp_values[i],"\t", StFct_ring[i], "\t", StFct_ring_uncertainty[i])
     end
 end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-#PLOTTING SPINS HEATMAP 
-function plot_final_config_heatmap()
-
-    global z_dir_sd_plot = z_dir_sd |> Array
-    global z_dir_sd_plot = reshape(z_dir_sd_plot, N_sd, replica_num)
-
-
-    anim_2 = @animate for replica in 1:replica_num
-        heatmap(reshape(z_dir_sd_plot[:,replica], n_x, n_y), color=:grays, cbar=false, xticks=false, yticks=false, framestyle=:box, size=(400,400))
-        scatter!(x_pos_pinning_site[:,replica], y_pos_pinning_site[:,replica], label=false, ms= 5, msw=0)
-        title!("Temp:$Temp, J:$J_NN, h:$B_global, replica:$replica")
-    end
-
-    gif(anim_2, "SD_StFct_FinalConfigL$(n_x)J$(J_NN)Temp$(Temp)B$(B_global)psNum$(pinning_site_num)repNum$(replica_num)_ring.gif", fps=2)
-
-end
-
-#------------------------------------------------------------------------------------------------------------------------------#
-
-plot_final_config_heatmap()
 
 #------------------------------------------------------------------------------------------------------------------------------#
 
