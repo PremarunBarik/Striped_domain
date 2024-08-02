@@ -275,19 +275,19 @@ end
 function calculate_uncertainty()
 
     global AF_bonds_horizontal_av = sum(AF_bonds_horizontal_sum)/(MC_steps * replica_num) |> Float32
-    global AF_bonds_horizontal_uncertainty = (AF_bonds_horizontal_sum .- AF_bonds_horizontal_av) .^ 2 |> Array{Float32}
+    global AF_bonds_horizontal_uncertainty = ((AF_bonds_horizontal_sum/MC_steps) .- AF_bonds_horizontal_av) .^ 2 |> Array{Float32}
     global AF_bonds_horizontal_uncertainty = sqrt(sum(AF_bonds_horizontal_uncertainty)/replica_num) |> Float32
 
     global AF_bonds_vertical_av = sum(AF_bonds_vertical_sum)/(MC_steps * replica_num) |> Float32
-    global AF_bonds_vertical_uncertainty = (AF_bonds_vertical_sum .- AF_bonds_vertical_av) .^ 2 |> Array{Float32}
+    global AF_bonds_vertical_uncertainty = ((AF_bonds_vertical_sum/MC_steps) .- AF_bonds_vertical_av) .^ 2 |> Array{Float32}
     global AF_bonds_vertical_uncertainty = sqrt(sum(AF_bonds_vertical_uncertainty)/replica_num) |> Float32
 
     global AF_bonds_total_av = sum(AF_bonds_total_sum)/(MC_steps * replica_num) |> Float32
-    global AF_bonds_total_uncertainty = (AF_bonds_total_sum .- AF_bonds_total_av) .^ 2 |> Array{Float32}
+    global AF_bonds_total_uncertainty = ((AF_bonds_total_sum/MC_steps) .- AF_bonds_total_av) .^ 2 |> Array{Float32}
     global AF_bonds_total_uncertainty = sqrt(sum(AF_bonds_total_uncertainty)/replica_num) |> Float32
 
     global OrientOrder_parameter_av = sum(OrientOrder_parameter_sum)/(MC_steps * replica_num) |> Float32
-    global OrientOrder_parameter_uncertainty = (OrientOrder_parameter_sum .- OrientOrder_parameter_av) .^ 2 |> Array{Float32}
+    global OrientOrder_parameter_uncertainty = ((OrientOrder_parameter_sum/MC_steps) .- OrientOrder_parameter_av) .^ 2 |> Array{Float32}
     global OrientOrder_parameter_uncertainty = sqrt(sum(OrientOrder_parameter_uncertainty)/replica_num) |> Float32
     global OrientOrder_parameter_av = OrientOrder_parameter_av*replica_num |> Float32
 end
